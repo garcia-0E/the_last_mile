@@ -8,3 +8,8 @@ secrets.toml
 # ignore duckdb
 *.duckdb
 *.wal
+dags/
+logs/
+modules/
+terraform/
+.terraform/

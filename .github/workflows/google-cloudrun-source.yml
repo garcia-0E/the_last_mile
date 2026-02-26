@@ -35,9 +35,9 @@ on:
       - '"main"'
 
 env:
-  PROJECT_ID: '	vast-formula-478020-a1' # TODO: update to your Google Cloud project ID
-  REGION: 'us-central1' # TODO: update to your region
-  SERVICE: 'tfm-server' # TODO: update to your service name
+  PROJECT_ID: 'vast-formula-478020-a1'
+  REGION: 'us-central1'
+  SERVICE: 'tfm-server'
 
 jobs:
   build:

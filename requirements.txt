@@ -1,2 +1,0 @@
-dlt[bigquery]>=1.5.0
-google-api-python-client

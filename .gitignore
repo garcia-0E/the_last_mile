@@ -13,3 +13,4 @@ logs/
 modules/
 terraform/
 .terraform/
+.bruin.yml

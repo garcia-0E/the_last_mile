@@ -38,7 +38,8 @@ env:
   PROJECT_ID: 'vast-formula-478020-a1'
   REGION: 'us-central1'
   SERVICE: 'tfm-server'
-  WORKLOAD_IDENTITY_PROVIDER: 'projects/725722089/locations/global/workloadIdentityPools/github' # TODO: replace with your workload identity provider
+  WORKLOAD_IDENTITY_PROVIDER: 'projects/725722089/locations/global/workloadIdentityPools/github/providers/github-actions-provider'
+  SERVICE_ACCOUNT: 'the-last-mile-admin@vast-formula-478020-a1.iam.gserviceaccount.com'
 
 
 
@@ -63,6 +64,7 @@ jobs:
         uses: 'google-github-actions/auth@v2' # google-github-actions/auth@v2
         with:
           workload_identity_provider: '${{ env.WORKLOAD_IDENTITY_PROVIDER }}'
+          service_account: '${{ env.SERVICE_ACCOUNT }}'
 
       # BEGIN - Docker auth and build
       #

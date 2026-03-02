@@ -38,7 +38,7 @@ env:
   PROJECT_ID: 'vast-formula-478020-a1'
   GAR_LOCATION: 'us-central1'
   SERVICE: 'tfm-test'
-  REPOSITORY: 'cloud-run-source-deploy'
+  REPOSITORY: 'tfm-test'
 
 jobs:
   deploy:

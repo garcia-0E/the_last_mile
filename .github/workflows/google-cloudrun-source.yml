@@ -107,6 +107,7 @@ jobs:
           #  env_vars: |
           #  NODE_ENV=production
           #  TOKEN_EXPIRE=6400
+          logging: 'NONE'
 
       # If required, use the Cloud Run url output in later steps
       - name: Show Output

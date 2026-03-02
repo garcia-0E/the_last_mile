@@ -1,0 +1,36 @@
+steps:
+  # Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '--tag'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_SERVICE}/${_SERVICE}:${COMMIT_SHA}'
+      - '.'
+
+  # Push the Docker image to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_SERVICE}/${_SERVICE}:${COMMIT_SHA}'
+
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - '${_SERVICE}'
+      - '--image'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_SERVICE}/${_SERVICE}:${COMMIT_SHA}'
+      - '--region'
+      - '${_REGION}'
+
+images:
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_SERVICE}/${_SERVICE}:${COMMIT_SHA}'
+
+substitutions:
+  _REGION: 'us-central1'
+  _SERVICE: 'tfm-server'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

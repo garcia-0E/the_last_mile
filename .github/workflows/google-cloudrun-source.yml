@@ -9,7 +9,8 @@ env:
   PROJECT_ID: "vast-formula-48020-a1" # TODO: update to your Google Cloud project ID
   REGION: "us-central1" # TODO: update to your region
   SERVICE: "tfm-test" # TODO: update to your service name
-  WORKLOAD_IDENTITY_PROVIDER: "projects/your-project-number/locations/global/workloadIdentityPools/github-pool-s2-id/providers/github" # TODO: update to your workload identity provider
+  WORKLOAD_IDENTITY_PROVIDER: "projects/725722089/locations/global/workloadIdentityPools/github/providers/github-actions-provider" # TODO: update to your workload identity provider
+  SERVICE_ACCOUNT: "the-last-mile-admin@vast-formula-478020-a1.iam.gserviceaccount.com"
 
 
 jobs:
@@ -31,8 +32,8 @@ jobs:
         name: "Authenticate to Google Cloud"
         uses: "google-github-actions/auth@v2"
         with:
-          workload_identity_provider: "projects/your-project-number/locations/global/workloadIdentityPools/github-pool-s2-id/providers/github"
-          service_account: "github-wif-s2@project-id.iam.gserviceaccount.com"
+          workload_identity_provider: "${{ env.WORKLOAD_IDENTITY_PROVIDER }}"
+          service_account: "${{ env.SERVICE_ACCOUNT }}@${{ env.PROJECT_ID }}.iam.gserviceaccount.com"
 
 
       - name: "Docker Auth"

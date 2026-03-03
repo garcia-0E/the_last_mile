@@ -6,7 +6,7 @@ on:
       - "main"
 
 env:
-  PROJECT_ID: "vast-formula-48020-a1" # TODO: update to your Google Cloud project ID
+  PROJECT_ID: "vast-formula-478020-a1" # TODO: update to your Google Cloud project ID
   REGION: "us-central1" # TODO: update to your region
   SERVICE: "tfm-test" # TODO: update to your service name
   WORKLOAD_IDENTITY_PROVIDER: "projects/725722089/locations/global/workloadIdentityPools/github/providers/github-actions-provider" # TODO: update to your workload identity provider

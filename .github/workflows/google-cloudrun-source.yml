@@ -33,12 +33,12 @@ jobs:
         uses: "google-github-actions/auth@v2"
         with:
           workload_identity_provider: "${{ env.WORKLOAD_IDENTITY_PROVIDER }}"
-          service_account: "${{ env.SERVICE_ACCOUNT }}"
+          service_account: "${{ env.SERVICE_ACCOUNT }}@${{ env.PROJECT_ID }}.iam.gserviceaccount.com"
 
 
       - name: "Docker Auth"
         run: |
-          gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin ${{ env.REGION }}-docker.pkg.dev
+          gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
 
 
       - name: "Build and Push Container"

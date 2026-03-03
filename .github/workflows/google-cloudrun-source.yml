@@ -38,7 +38,7 @@ jobs:
 
       - name: "Docker Auth"
         run: |
-          gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev
+          gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin ${{ env.REGION }}-docker.pkg.dev
 
 
       - name: "Build and Push Container"

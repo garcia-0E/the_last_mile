@@ -15,3 +15,4 @@ terraform/
 .terraform/
 .bruin.yml
 *.tfvars
+*.tfstate

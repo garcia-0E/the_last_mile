@@ -6,11 +6,11 @@ on:
       - "main"
 
 env:
-  PROJECT_ID: "vast-formula-478020-a1" # TODO: update to your Google Cloud project ID
-  REGION: "us-central1" # TODO: update to your region
-  SERVICE: "tfm-test" # TODO: update to your service name
-  WORKLOAD_IDENTITY_PROVIDER: "projects/725722089/locations/global/workloadIdentityPools/github/providers/github-actions-provider" # TODO: update to your workload identity provider
-  SERVICE_ACCOUNT: "the-last-mile-admin@vast-formula-478020-a1.iam.gserviceaccount.com"
+  PROJECT_ID: "vast-formula-478020-a1"
+  REGION: "us-central1"
+  SERVICE: "cloudrun-service-tfm"
+  WORKLOAD_IDENTITY_PROVIDER: "projects/725722089/locations/global/workloadIdentityPools/github/providers/github-actions-provider"
+  SERVICE_ACCOUNT: "tlm-deploy-sa@vast-formula-478020-a1.iam.gserviceaccount.com"
 
 
 jobs:
@@ -45,7 +45,7 @@ jobs:
       - id: "build_and_push"
         name: "Build and Push Container"
         run: |-
-          DOCKER_TAG="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/search-agent:${{ github.sha }}"
+          DOCKER_TAG="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/server:${{ github.sha }}"
           docker build --tag "${DOCKER_TAG}" .
           docker push "${DOCKER_TAG}"
 
@@ -56,8 +56,11 @@ jobs:
         with:
           service: "${{ env.SERVICE }}"
           region: "${{ env.REGION }}"
-          image: "${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/search-agent:${{ github.sha }}"
-          flags: "--allow-unauthenticated --port=8000 --set-env-vars=JWT_SECRET=GOOGLE_CLOUD_PROJECT=${{ env.PROJECT_ID }},GOOGLE_CLOUD_LOCATION=${{ env.REGION }}"
+          image: "${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/server:${{ github.sha }}"
+          flags: "--allow-unauthenticated --port=8000"
+          env_vars: |
+            GOOGLE_CLOUD_PROJECT=${{ env.PROJECT_ID }},
+            PUBSUB_TOPIC=file-processing-topic
 
 
       - name: "Show output"

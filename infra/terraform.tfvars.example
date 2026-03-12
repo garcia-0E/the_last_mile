@@ -1,0 +1,36 @@
+# Copy this file to terraform.tfvars and fill in your values
+
+##### GCP #####
+
+project_id  = "your-gcp-project-id"
+region      = "us-central1"
+zone        = "us-central1-a"
+environment = "dev"
+
+labels = {
+  team    = "your-team"
+  project = "the-last-mile"
+}
+
+# IAM roles granted to the deployment service account (tlm-deploy-sa)
+# used by GitHub Actions to build, push, and deploy the Cloud Run service
+roles = [
+  "roles/run.admin",
+  "roles/artifactregistry.writer",
+  "roles/iam.serviceAccountUser",
+  "roles/viewer",
+]
+
+# Name of the Cloud Run service and Artifact Registry repository
+cloud_run_service = "cloudrun-service-tfm"
+
+##### GitHub #####
+
+# GitHub repository owner (user or org name)
+github_owner = "your-github-username-or-org"
+
+# GitHub repository name (without owner prefix)
+github_repo = "your-repo-name"
+
+# Branch that triggers the CI/CD pipeline
+github_branch = "main"

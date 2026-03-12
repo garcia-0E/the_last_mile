@@ -14,3 +14,4 @@ modules/
 terraform/
 .terraform/
 .bruin.yml
+*.tfvars

@@ -4,7 +4,7 @@ import pandas as pd
 from sanic import Sanic
 from sanic.response import text, json as json_response
 from sanic.request import Request
-from enhancer import normalize_dataframe, load_to_bigquery, publish_file_message
+from enhancer import normalize_dataframe
 from embedder import embed
 from db import get_client
 from query import discover_partners, ensure_partner_indexes
@@ -20,18 +20,21 @@ async def startup(_app, _loop):
     client.connect()
     ensure_partner_indexes(client)
 
-
 @app.post("/health")
 async def health_check(request: Request):
+    return text("Hello World from the Built image!")
+
+@app.post("/enhancer")
+async def tfm_enhancer(request: Request):
     file = request.files.get("file") if request.files else None
     # Process the request body as needed
     if file:
         df = pd.read_csv(io.BytesIO(file.body))
         n_df = normalize_dataframe(df)
         e_df = embed(n_df)
-        # publish_file_message(embed(n_df))
+        # publish_file_message(e_df)
         get_client().upsert("tfm_leads", e_df)
-        return text("File received and processed successfully!")
+        return json_response({"message": "File received and processed successfully!", "data": e_df.to_dict(orient="records")})
     return text("Hello World from the Built image!")
 
 
@@ -39,7 +42,7 @@ async def health_check(request: Request):
 async def tfm_suggester(request: Request):
     response = discover_partners(
             client=get_client(),
-            query_text=request.json["query"],
+            query_text=request.json.get("query"),
             country=request.json.get("country"),
             seniority=request.json.get("seniority"),
             top_k=int(request.json.get("top_k", 20)),

@@ -1,16 +1,41 @@
 import io
+from dataclasses import dataclass, field
+from typing import Optional, List, Dict, Any
 
 import pandas as pd
 from sanic import Sanic
 from sanic.response import text, json as json_response
 from sanic.request import Request
+from sanic_ext import openapi
 from enhancer import normalize_dataframe
 from embedder import embed
 from db import get_client
 from query import discover_partners, ensure_partner_indexes
 
 
+# --- OpenAPI request / response schemas ---------------------------------- #
+
+@dataclass
+class SuggesterRequest:
+    """Body for the /suggester endpoint."""
+    query: str
+    country: Optional[str] = None
+    seniority: Optional[str] = None
+    top_k: int = 20
+
+
+@dataclass
+class EnhancerResponse:
+    message: str
+    data: List[Dict[str, Any]] = field(default_factory=list)
+
+
 app = Sanic("TheLastMileAPI")
+app.ext.openapi.describe(
+    "The Last Mile API",
+    version="1.0.0",
+    description="Lead enrichment, embedding, and partner discovery.",
+)
 
 
 @app.before_server_start
@@ -21,10 +46,22 @@ async def startup(_app, _loop):
     ensure_partner_indexes(client)
 
 @app.post("/health")
+@openapi.summary("Health check")
+@openapi.description("Returns a simple message to confirm the service is running.")
+@openapi.response(200, {"text/plain": str}, description="Service is healthy")
+@openapi.tag("health")
 async def health_check(request: Request):
     return text("Hello World from the Built image!")
 
 @app.post("/enhancer")
+@openapi.summary("Enhance & embed leads")
+@openapi.description(
+    "Upload a CSV file of leads. The file is normalised, embedded, "
+    "and upserted into the vector store."
+)
+@openapi.body({"multipart/form-data": {"file": openapi.File}})
+@openapi.response(200, {"application/json": EnhancerResponse}, description="File processed successfully")
+@openapi.tag("leads")
 async def tfm_enhancer(request: Request):
     file = request.files.get("file") if request.files else None
     # Process the request body as needed
@@ -39,6 +76,13 @@ async def tfm_enhancer(request: Request):
 
 
 @app.post("/suggester")
+@openapi.summary("Discover partners")
+@openapi.description(
+    "Semantic search over stored leads to find the best-matching partners."
+)
+@openapi.body({"application/json": SuggesterRequest})
+@openapi.response(200, description="List of matching partners")
+@openapi.tag("partners")
 async def tfm_suggester(request: Request):
     response = discover_partners(
             client=get_client(),

@@ -1,4 +1,5 @@
 sanic==25.12.0
+sanic-ext>=24.12.0
 pandas>=2.0.0
 google-cloud-bigquery[pandas]>=3.0.0
 google-cloud-pubsub>=2.0.0

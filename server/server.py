@@ -31,6 +31,8 @@ class EnhancerResponse:
 
 
 app = Sanic("TheLastMileAPI")
+app.config.HEALTH = True
+app.config.HEALTH_ENDPOINT = True
 WorkerManager.THRESHOLD = 600
 
 app.ext.openapi.describe(
@@ -47,21 +49,13 @@ async def startup(_app, _loop):
     client.connect()
     ensure_partner_indexes(client)
 
-@app.post("/health")
-@openapi.summary("Health check")
-@openapi.description("Returns a simple message to confirm the service is running.")
-@openapi.response(200, {"text/plain": str}, description="Service is healthy")
-@openapi.tag("health")
-async def health_check(request: Request):
-    return text("Hello World from the Built image!")
-
 @app.post("/enhancer")
 @openapi.summary("Enhance & embed leads")
 @openapi.description(
     "Upload a CSV file of leads. The file is normalised, embedded, "
     "and upserted into the vector store."
 )
-# @openapi.body({"multipart/form-data": {"file": openapi.File}})
+@openapi.body({"multipart/form-data": {"schema": {"type": "object", "properties": {"file": {"type": "string", "format": "binary"}}}}})
 @openapi.response(200, {"application/json": EnhancerResponse}, description="File processed successfully")
 @openapi.tag("leads")
 async def tfm_enhancer(request: Request):

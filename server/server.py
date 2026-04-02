@@ -23,6 +23,10 @@ class SuggesterRequest:
     seniority: Optional[str] = None
     top_k: int = 20
 
+@dataclass
+class EnhancerRequest:
+    """Body for the /enhancer endpoint."""
+    file: openapi.File
 
 @dataclass
 class EnhancerResponse:
@@ -59,7 +63,7 @@ async def health_check(request: Request):
     "Upload a CSV file of leads. The file is normalised, embedded, "
     "and upserted into the vector store."
 )
-@openapi.body({"multipart/form-data": {"file": openapi.File}})
+# @openapi.body({"multipart/form-data": {"file": openapi.File}})
 @openapi.response(200, {"application/json": EnhancerResponse}, description="File processed successfully")
 @openapi.tag("leads")
 async def tfm_enhancer(request: Request):

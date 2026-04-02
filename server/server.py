@@ -7,6 +7,7 @@ from sanic import Sanic
 from sanic.response import text, json as json_response
 from sanic.request import Request
 from sanic_ext import openapi
+from sanic.worker.manager import WorkerManager
 from enhancer import normalize_dataframe
 from embedder import embed
 from db import get_client
@@ -30,6 +31,8 @@ class EnhancerResponse:
 
 
 app = Sanic("TheLastMileAPI")
+WorkerManager.THRESHOLD = 600
+
 app.ext.openapi.describe(
     "The Last Mile API",
     version="1.0.0",

@@ -24,11 +24,6 @@ class SuggesterRequest:
     top_k: int = 20
 
 @dataclass
-class EnhancerRequest:
-    """Body for the /enhancer endpoint."""
-    file: openapi.File
-
-@dataclass
 class EnhancerResponse:
     message: str
     data: List[Dict[str, Any]] = field(default_factory=list)

@@ -92,7 +92,7 @@ def _build_payloads(df: pd.DataFrame) -> List[dict]:
     return payloads
 
 
-def embed(df: pd.DataFrame) -> str:
+def embed(df: pd.DataFrame) -> list:
     """Generate embeddings for a normalized DataFrame and publish to Pub/Sub.
 
     The message payload contains a JSON array of objects, each with:

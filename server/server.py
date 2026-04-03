@@ -55,7 +55,7 @@ async def startup(_app, _loop):
     "Upload a CSV file of leads. The file is normalised, embedded, "
     "and upserted into the vector store."
 )
-@openapi.body({"multipart/form-data": {"schema": {"type": "object", "properties": {"file": {"type": "string", "format": "binary"}}}}})
+@openapi.body({"multipart/form-data": {"schema": {"type": "object", "properties": {"file": {"type": "object", "format": "binary"}}}}})
 @openapi.response(200, {"application/json": EnhancerResponse}, description="File processed successfully")
 @openapi.tag("leads")
 async def tfm_enhancer(request: Request):
@@ -67,7 +67,7 @@ async def tfm_enhancer(request: Request):
         e_df = embed(n_df)
         # publish_file_message(e_df)
         get_client().upsert("tfm_leads", e_df)
-        return json_response({"message": "File received and processed successfully!", "data": e_df.to_dict(orient="records")})
+        return json_response({"message": "File received and processed successfully!"})
     return text("Hello World from the Built image!")
 
 

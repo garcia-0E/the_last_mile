@@ -5,3 +5,4 @@ google-cloud-bigquery[pandas]>=3.0.0
 google-cloud-pubsub>=2.0.0
 sentence-transformers>=2.2.0
 qdrant-client>=1.17.0
+google-cloud-aiplatform>=1.38.0

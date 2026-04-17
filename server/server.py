@@ -12,6 +12,7 @@ from enhancer import normalize_dataframe
 from embedder import embed
 from db import get_client
 from query import discover_partners, ensure_partner_indexes
+from drafts import generate_drafts
 
 
 # --- OpenAPI request / response schemas ---------------------------------- #
@@ -29,11 +30,22 @@ class EnhancerResponse:
     message: str
     data: List[Dict[str, Any]] = field(default_factory=list)
 
+@dataclass
+class DraftsRequest:
+    """Body for the /drafts endpoint."""
+    leads: List[Dict[str, Any]]
+    context: str
+
+@dataclass
+class DraftsResponse:
+    message: str
+    drafts: List[Dict[str, Any]] = field(default_factory=list)
+
 
 app = Sanic("TheLastMileAPI")
 app.config.HEALTH = True
 app.config.HEALTH_ENDPOINT = True
-WorkerManager.THRESHOLD = 600
+app.config.CORS_ORIGINS = "https://garcia-0e.github.io,http://localhost:5173,http://localhost:4173"
 
 app.ext.openapi.describe(
     "The Last Mile API",
@@ -43,7 +55,7 @@ app.ext.openapi.describe(
 
 
 @app.before_server_start
-async def startup(_app, _loop):
+async def startup(_app):
     """Connect to the DB and create indexes once at startup."""
     client = get_client()
     client.connect()
@@ -88,6 +100,28 @@ async def tfm_suggester(request: Request):
             top_k=int(request.json.get("top_k", 20)),
         )
     return json_response(response)
+
+
+@app.post("/drafts")
+@openapi.summary("Generate email drafts")
+@openapi.description(
+    "Generate personalised outreach email drafts for a list of leads "
+    "using Vertex AI."
+)
+@openapi.body({"application/json": DraftsRequest})
+@openapi.response(200, {"application/json": DraftsResponse}, description="Email drafts generated")
+@openapi.tag("drafts")
+async def tfm_drafts(request: Request):
+    leads = request.json.get("leads", [])
+    context = request.json.get("context", "")
+
+    if not leads:
+        return json_response({"message": "No leads provided", "drafts": []}, status=400)
+    if not context:
+        return json_response({"message": "Campaign context is required", "drafts": []}, status=400)
+
+    drafts = await generate_drafts(leads, context)
+    return json_response({"message": f"Generated {len(drafts)} drafts", "drafts": drafts})
 
 
 if __name__ == "__main__":

@@ -29,45 +29,87 @@ resource "google_artifact_registry_repository" "cloud_run_repo" {
 # not Terraform. This avoids the bootstrap problem of needing a container
 # image to exist before the service can be created.
 
-##### Workload Identity Federation (GitHub Actions) #####
-
-# resource "google_iam_workload_identity_pool" "github" {
-#   workload_identity_pool_id = "github"
-#   display_name              = "GitHub Actions Pool"
-#   description               = "Workload Identity Pool for GitHub Actions"
-#   project                   = var.project_id
-# }
-
-# resource "google_iam_workload_identity_pool_provider" "github_actions" {
-#   workload_identity_pool_id          = google_iam_workload_identity_pool.github.workload_identity_pool_id
-#   workload_identity_pool_provider_id = "github-actions-provider"
-#   display_name                       = "GitHub Actions Provider"
-#   project                            = var.project_id
-
-#   attribute_mapping = {
-#     "google.subject"       = "assertion.sub"
-#     "attribute.actor"      = "assertion.actor"
-#     "attribute.repository" = "assertion.repository"
-#   }
-
-#   attribute_condition = "assertion.repository_owner == '${var.github_owner}'"
-
-#   oidc {
-#     issuer_uri = "https://token.actions.githubusercontent.com"
-#   }
-# }
-
-# Allow GitHub Actions WIF to impersonate the deploy service account
-# resource "google_service_account_iam_member" "wif_sa_binding" {
-#   service_account_id = google_service_account.deploy_service_account.name
-#   role               = "roles/iam.workloadIdentityUser"
-#   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_owner}/${var.github_repo}"
-# }
-
 ##### Pub/Sub #####
 
-resource "google_pubsub_topic" "file_processing" {
-  name    = "file-processing-topic"
-  project = var.project_id
-  
+# resource "google_pubsub_topic" "file_processing" {
+#   name    = "file-processing-topic"
+#   project = var.project_id
+
+# }
+
+# resource "google_pubsub_subscription" "file_processing_subscription" {
+#   name  = "file-processing-subscription"
+#   topic = google_pubsub_topic.file_processing.name
+#   project = var.project_id
+# }
+
+# resource "google_storage_bucket" "bucket" {
+#   name                        = "${var.project_id}-gcf-source-pubsub"
+#   location                    = "US"
+#   uniform_bucket_level_access = true
+#   project                     = var.project_id
+# }
+
+# resource "google_storage_bucket_object" "function-source" {
+#   name   = "sample_function_py.zip"
+#   bucket = google_storage_bucket.bucket.name
+#   source = "../../helpers/sample_function_py.zip"
+# }
+
+# module "pubsub" {
+#   source  = "terraform-google-modules/pubsub/google"
+#   version = "~> 7.0"
+
+#   topic      = "function2-topic"
+#   project_id = var.project_id
+# }
+
+# module "cloud_functions2" {
+#   source  = "GoogleCloudPlatform/cloud-functions/google"
+#   version = "~> 0.7"
+
+#   project_id    = var.project_id
+#   function_name = "function2-pubsub-trigger-py"
+#   location      = var.location
+#   runtime       = "python310"
+#   entrypoint    = "hello_http"
+#   storage_source = {
+#     bucket     = google_storage_bucket.bucket.name
+#     object     = google_storage_bucket_object.function-source.name
+#     generation = null
+#   }
+#   event_trigger = {
+#     trigger_region        = "us-central1"
+#     event_type            = "google.cloud.pubsub.topic.v1.messagePublished"
+#     service_account_email = null
+#     pubsub_topic          = module.pubsub.id
+#     retry_policy          = "RETRY_POLICY_RETRY"
+#     event_filters         = null
+#   }
+# }
+
+#### BigQuery #####
+resource "google_bigquery_dataset" "tfm_dataset_apollo_contacts" {
+  dataset_id = "tfm_dataset_apollo_contacts"
+  project    = var.project_id
+  location   = var.region
+}
+
+resource "google_bigquery_table" "apollo_contacts_normalized" {
+  table_id   = "apollo_contacts_normalized"
+  dataset_id = google_bigquery_dataset.tfm_dataset_apollo_contacts.dataset_id
+  project    = var.project_id
+}
+
+#### Cloud SQL #####
+resource "google_sql_database_instance" "tfm_db_instance" {
+  name             = var.tfm_db_instance
+  database_version = "POSTGRES_18"
+  region           = var.region
+  project          = var.project_id
+  deletion_protection = true
+
+  settings {
+    tier = "db-f1-micro"
+  }
 }

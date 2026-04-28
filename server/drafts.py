@@ -34,72 +34,66 @@ def _get_model():
     return _model
 
 
-def _build_prompt(lead: Dict[str, Any], context: str) -> str:
+def _build_prompt(
+    lead: Dict[str, Any],
+    context: str,
+    company_id: int,
+    prompt_name: str,
+) -> str:
     """Build the generation prompt for a single lead.
 
-    Maps payload fields to the campaign template variables:
-        first_name  → First_Name
-        last_name   → Last_Name
-        company_name → Company_Name
-        title       → Job_Title
-        industry    → Category
+    Fetches the active prompt template from the ``prompt`` table for the given
+    *company_id* / *prompt_name* pair, then interpolates the following named
+    placeholders with values extracted from *lead*:
+
+        {first_name}, {last_name}, {company}, {job_title}, {category}, {context}
 
     Args:
         lead: A lead dict — either a full suggester result (with ``payload``
               key) or a flat payload dict.
         context: Free-text campaign context provided by the caller.
+        company_id: ID of the company whose prompt template to use.
+        prompt_name: The ``name`` column value of the desired prompt row.
 
     Returns:
-        The complete prompt string.
+        The complete prompt string with all placeholders filled in.
+
+    Raises:
+        ValueError: If no active prompt is found for the given company / name.
     """
+    from services import get_active_prompt
+
+    template = get_active_prompt(company_id, prompt_name)
+    if template is None:
+        raise ValueError(
+            f"No active prompt found for company_id={company_id}, name={prompt_name!r}"
+        )
+
     payload = lead.get("payload", lead)
 
-    first_name = payload.get("first_name", "")
-    last_name = payload.get("last_name", "")
-    company = payload.get("company_name", "")
-    job_title = payload.get("title", "")
-    category = payload.get("industry", "")
-
-    return (
-        "Act as Alfredo La Corte, Impact Producer for 'The Longer You Bleed'. "
-        f"Write a peer-to-peer outreach email to {first_name} {last_name} at {company}.\n\n"
-        "Lead variables:\n"
-        f"- First Name: {first_name}\n"
-        f"- Last Name: {last_name}\n"
-        f"- Company: {company}\n"
-        f"- Job Title: {job_title}\n"
-        f"- Category: {category}\n\n"
-        f"Additional campaign context: {context}\n\n"
-        "Guidelines:\n"
-        "1. Subject line: 'Collaborating on digital resilience for 2026'\n"
-        f"2. Opening: Lead directly with their role as {job_title}. State that given their "
-        f"work at {company}, they are uniquely positioned to discuss the intersection of "
-        "technical/programmatic policy and human safety.\n"
-        "3. The Mission: Briefly explain 'The Longer You Bleed' documentary and the Digital "
-        "Resilience Toolkit (built with JED Foundation and Tactical Tech).\n"
-        "4. The Ask: Ask if they empathize with the problem of digital safety for vulnerable "
-        "populations. Offer a private film link and a 15-minute call.\n"
-        "5. The Referral: Add a closing line: \"If you aren't the direct lead for partnerships "
-        "or ethics initiatives, I'd appreciate it if you could point me toward the right person "
-        f"at {company}.\"\n"
-        "6. Tone: Use the 'Unity' principle from Cialdini — position yourself as a fellow "
-        "peer, not a vendor. Peer-to-peer, not pitch.\n\n"
-        "Constraints:\n"
-        "- Do NOT use placeholder brackets like [Name] — all lead data is already provided above.\n"
-        "- Keep the email under 250 words.\n"
-        "- Return ONLY the email (subject line + body), no extra commentary."
-    )
+    return template.format_map({
+        "first_name": payload.get("first_name", ""),
+        "last_name":  payload.get("last_name", ""),
+        "company":    payload.get("company_name", ""),
+        "job_title":  payload.get("title", ""),
+        "category":   payload.get("industry", ""),
+        "context":    context,
+    })
 
 
 async def generate_drafts(
     leads: List[Dict[str, Any]],
     context: str,
+    company_id: int,
+    prompt_name: str,
 ) -> List[Dict[str, Any]]:
     """Generate email drafts for a list of leads using Vertex AI.
 
     Args:
         leads: List of lead dicts (as returned by ``/suggester``).
         context: Campaign purpose / context for the outreach emails.
+        company_id: ID of the company whose prompt template to use.
+        prompt_name: The ``name`` of the active prompt row to retrieve.
 
     Returns:
         List of dicts, each containing the original ``lead`` payload and
@@ -110,7 +104,7 @@ async def generate_drafts(
 
     for lead in leads:
         payload = lead.get("payload", lead)
-        prompt = _build_prompt(lead, context)
+        prompt = _build_prompt(lead, context, company_id, prompt_name)
 
         try:
             response = await model.generate_content_async(prompt)

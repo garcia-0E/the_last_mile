@@ -11,8 +11,9 @@ from sanic.worker.manager import WorkerManager
 from enhancer import normalize_dataframe
 from embedder import embed
 from db import get_client
-from query import discover_partners, ensure_partner_indexes
+from query import discover_partners, ensure_partner_indexes, get_partner_filters
 from drafts import generate_drafts
+from services import get_companies, get_prompts, update_prompt
 
 
 # --- OpenAPI request / response schemas ---------------------------------- #
@@ -20,10 +21,30 @@ from drafts import generate_drafts
 @dataclass
 class SuggesterRequest:
     """Body for the /suggester endpoint."""
-    query: str
+    description: Optional[str] = None
+    themes: Optional[str] = None
+    target_communities: Optional[str] = None
     country: Optional[str] = None
+    partnership_types: Optional[str] = None
+    partnership_offer: Optional[str] = None
+    stage: Optional[str] = None
     seniority: Optional[str] = None
+    title: Optional[str] = None
+    exclude_industries: List[str] = field(default_factory=list)
+    company_name_to_exclude: List[str] = field(default_factory=list)
     top_k: int = 20
+
+@dataclass
+class FiltersResponse:
+    """Response shape of the /filters endpoint — distinct DB values per filter."""
+    country: List[str] = field(default_factory=list)
+    partnership_types: List[str] = field(default_factory=list)
+    partnership_offer: List[str] = field(default_factory=list)
+    stage: List[str] = field(default_factory=list)
+    seniority: List[str] = field(default_factory=list)
+    title: List[str] = field(default_factory=list)
+    exclude_industries: List[str] = field(default_factory=list)
+    company_name_to_exclude: List[str] = field(default_factory=list)
 
 @dataclass
 class EnhancerResponse:
@@ -35,6 +56,8 @@ class DraftsRequest:
     """Body for the /drafts endpoint."""
     leads: List[Dict[str, Any]]
     context: str
+    company_id: int
+    prompt_name: str
 
 @dataclass
 class DraftsResponse:
@@ -92,14 +115,35 @@ async def tfm_enhancer(request: Request):
 @openapi.response(200, description="List of matching partners")
 @openapi.tag("partners")
 async def tfm_suggester(request: Request):
+    body = request.json or {}
     response = discover_partners(
             client=get_client(),
-            query_text=request.json.get("query"),
-            country=request.json.get("country"),
-            seniority=request.json.get("seniority"),
-            top_k=int(request.json.get("top_k", 20)),
+            description=body.get("description"),
+            themes=body.get("themes"),
+            target_communities=body.get("target_communities"),
+            country=body.get("country"),
+            partnership_types=body.get("partnership_types"),
+            partnership_offer=body.get("partnership_offer"),
+            stage=body.get("stage"),
+            seniority=body.get("seniority"),
+            title=body.get("title"),
+            exclude_industries=body.get("exclude_industries"),
+            company_name_to_exclude=body.get("company_name_to_exclude"),
+            top_k=int(body.get("top_k", 20)),
         )
     return json_response(response)
+
+
+@app.get("/filters")
+@openapi.summary("Available filter values")
+@openapi.description(
+    "Return the distinct values stored in the contacts collection for each "
+    "DB-backed partner filter. Used to populate the search form on the UI."
+)
+@openapi.response(200, {"application/json": FiltersResponse}, description="Filter options")
+@openapi.tag("partners")
+async def tfm_filters(request: Request):
+    return json_response(get_partner_filters(get_client()))
 
 
 @app.post("/drafts")
@@ -114,14 +158,63 @@ async def tfm_suggester(request: Request):
 async def tfm_drafts(request: Request):
     leads = request.json.get("leads", [])
     context = request.json.get("context", "")
+    company_id = request.json.get("company_id")
+    prompt_name = request.json.get("prompt_name", "")
 
     if not leads:
         return json_response({"message": "No leads provided", "drafts": []}, status=400)
     if not context:
         return json_response({"message": "Campaign context is required", "drafts": []}, status=400)
+    if not company_id:
+        return json_response({"message": "company_id is required", "drafts": []}, status=400)
+    if not prompt_name:
+        return json_response({"message": "prompt_name is required", "drafts": []}, status=400)
 
-    drafts = await generate_drafts(leads, context)
+    drafts = await generate_drafts(leads, context, company_id, prompt_name)
     return json_response({"message": f"Generated {len(drafts)} drafts", "drafts": drafts})
+
+
+@app.get("/companies")
+@openapi.summary("List companies")
+@openapi.description("Return all registered companies.")
+@openapi.response(200, description="List of companies")
+@openapi.tag("companies")
+async def tfm_companies(request: Request):
+    companies = get_companies()
+    return json_response(companies)
+
+
+@app.get("/prompts/<company_id:int>")
+@openapi.summary("List prompts for a company")
+@openapi.description("Return all prompts belonging to the given company.")
+@openapi.response(200, description="List of prompts")
+@openapi.tag("prompts")
+async def tfm_prompts(request: Request, company_id: int):
+    return json_response(get_prompts(company_id))
+
+
+@dataclass
+class PromptUpdateRequest:
+    """Body for the PUT /prompts/<prompt_id> endpoint."""
+    template: str
+
+
+@app.put("/prompts/<prompt_id:int>")
+@openapi.summary("Update a prompt's template")
+@openapi.description("Update the template text of an existing prompt.")
+@openapi.body({"application/json": PromptUpdateRequest})
+@openapi.response(200, description="Updated prompt")
+@openapi.tag("prompts")
+async def tfm_update_prompt(request: Request, prompt_id: int):
+    body = request.json or {}
+    template = body.get("template")
+    if template is None:
+        return json_response({"message": "template is required"}, status=400)
+
+    updated = update_prompt(prompt_id, template)
+    if updated is None:
+        return json_response({"message": f"Prompt {prompt_id} not found"}, status=404)
+    return json_response(updated)
 
 
 if __name__ == "__main__":

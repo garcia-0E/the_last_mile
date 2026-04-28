@@ -60,11 +60,11 @@ QDRANT_PORT = int(os.environ.get("QDRANT_PORT", "6333"))
 QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.OrmvGmATwHO4l2lqULhOYkmHpeXWL3Rr0752l8Mhqcc")
 QDRANT_GRPC = os.environ.get("QDRANT_GRPC", "false").lower() == "true"
 
-PG_HOST = os.environ.get("PG_HOST", "localhost")
+PG_HOST = os.environ.get("PG_HOST", "34.41.70.34")
 PG_PORT = int(os.environ.get("PG_PORT", "5432"))
-PG_USER = os.environ.get("PG_USER", "airflow")
-PG_PASSWORD = os.environ.get("PG_PASSWORD", "airflow")
-PG_DATABASE = os.environ.get("PG_DATABASE", "airflow")
+PG_USER = os.environ.get("PG_USER", "postgres")
+PG_PASSWORD = os.environ.get("PG_PASSWORD", "{KrGC|X:yc/q#FmR")
+PG_DATABASE = os.environ.get("PG_DATABASE", "postgres")
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +128,31 @@ class DBClient(ABC):
     @abstractmethod
     def delete(self, collection: str, ids: List[str]) -> None:
         """Remove records by id from *collection*."""
+
+    @abstractmethod
+    def list_values(
+        self,
+        collection: str,
+        fields: List[str],
+        *,
+        limit_per_field: int = 500,
+        scan_limit: int = 5000,
+    ) -> Dict[str, List[Any]]:
+        """Return the distinct values present in *collection* for each field.
+
+        Args:
+            collection: Target collection or table.
+            fields: Field names to enumerate.
+            limit_per_field: Maximum number of distinct values returned per
+                field. Excess values are dropped.
+            scan_limit: Maximum number of records to scan for vector
+                backends that need to iterate over points. Ignored by
+                relational backends.
+
+        Returns:
+            Mapping ``{field: sorted_distinct_values}``. Fields absent from
+            the data return an empty list.
+        """
 
 
 # ---------------------------------------------------------------------------
@@ -292,6 +317,57 @@ class QdrantClient(DBClient):
             points_selector=PointIdsList(points=ids),
         )
         logger.info(f"Deleted {len(ids)} points from Qdrant collection '{collection}'")
+
+    def list_values(
+        self,
+        collection: str,
+        fields: List[str],
+        *,
+        limit_per_field: int = 500,
+        scan_limit: int = 5000,
+    ) -> Dict[str, List[Any]]:
+        if not self._client.collection_exists(collection):
+            logger.warning("Collection '%s' does not exist; returning empty values", collection)
+            return {field: [] for field in fields}
+
+        seen: Dict[str, set] = {field: set() for field in fields}
+        scanned = 0
+        next_offset = None
+        page_size = 256
+
+        while scanned < scan_limit:
+            batch_size = min(page_size, scan_limit - scanned)
+            points, next_offset = self._client.scroll(
+                collection_name=collection,
+                with_payload=fields,
+                with_vectors=False,
+                limit=batch_size,
+                offset=next_offset,
+            )
+            if not points:
+                break
+
+            for point in points:
+                payload = point.payload or {}
+                for field in fields:
+                    value = payload.get(field)
+                    if value is None or value == "":
+                        continue
+                    if isinstance(value, list):
+                        for item in value:
+                            if item not in (None, ""):
+                                seen[field].add(item)
+                    else:
+                        seen[field].add(value)
+
+            scanned += len(points)
+            if next_offset is None:
+                break
+
+        return {
+            field: sorted(list(values))[:limit_per_field]
+            for field, values in seen.items()
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -465,6 +541,37 @@ class PostgresClient(DBClient):
             cur.execute(sql, ids)
 
         logger.info(f"Deleted {len(ids)} rows from PostgreSQL table '{collection}'")
+
+    def list_values(
+        self,
+        collection: str,
+        fields: List[str],
+        *,
+        limit_per_field: int = 500,
+        scan_limit: int = 5000,  # unused for SQL backend
+    ) -> Dict[str, List[Any]]:
+        result: Dict[str, List[Any]] = {field: [] for field in fields}
+
+        with self._conn.cursor() as cur:
+            for field in fields:
+                try:
+                    cur.execute(
+                        f"SELECT DISTINCT {field} FROM {collection} "
+                        f"WHERE {field} IS NOT NULL AND {field} <> '' "
+                        f"ORDER BY {field} LIMIT %s",
+                        (limit_per_field,),
+                    )
+                    result[field] = [row[0] for row in cur.fetchall()]
+                except Exception as exc:
+                    # Column may not exist yet — fall back to empty list.
+                    logger.warning(
+                        "list_values: skipping '%s.%s' (%s)",
+                        collection, field, exc,
+                    )
+                    self._conn.rollback()
+                    result[field] = []
+
+        return result
 
 
 # ---------------------------------------------------------------------------

@@ -96,3 +96,8 @@ variable "github_branch" {
   default     = "main"
 }
 
+variable "tfm_db_instance" {
+  description = "Name of the Cloud SQL instance for TFM"
+  type        = string
+  default     = "tfm-db"
+}

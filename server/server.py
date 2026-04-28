@@ -66,8 +66,6 @@ class DraftsResponse:
 
 
 app = Sanic("TheLastMileAPI")
-app.config.HEALTH = True
-app.config.HEALTH_ENDPOINT = True
 app.config.CORS_ORIGINS = "https://garcia-0e.github.io,http://localhost:5173,http://localhost:4173"
 
 app.ext.openapi.describe(

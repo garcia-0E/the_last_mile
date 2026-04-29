@@ -53,6 +53,11 @@ async def init_pool() -> None:
     """Open a dedicated asyncpg pool for relational queries.
 
     Use this when no shared pool is available (e.g. scripts or tests).
+
+    Any failure (missing env var, network error, auth rejection, ...) is
+    logged and re-raised so callers can decide whether to abort startup or
+    retry. ``_pool`` is left as ``None`` on failure so a subsequent call to
+    :func:`init_pool` can try again.
     """
     global _pool
     if _pool is not None:
@@ -60,13 +65,21 @@ async def init_pool() -> None:
 
     import asyncpg
 
-    cfg = _pg_config()
-    logger.info("Opening relational PG pool for services (host=%s)", cfg["host"])
-    _pool = await asyncpg.create_pool(
-        min_size=1,
-        max_size=5,
-        **cfg,
-    )
+    try:
+        cfg = _pg_config()
+        logger.info(
+            "Opening relational PG pool for services (host=%s)", cfg["host"],
+        )
+        _pool = await asyncpg.create_pool(
+            min_size=1,
+            max_size=5,
+            **cfg,
+        )
+    except Exception as exc:
+        # Make sure a half-initialised pool can never leak into module state.
+        _pool = None
+        logger.exception("Failed to initialise relational PG pool: %s", exc)
+        raise
 
 
 async def close_pool() -> None:

@@ -47,7 +47,7 @@ jobs:
         run: |-
           DOCKER_TAG="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/server:${{ github.sha }}"
           docker build --tag "${DOCKER_TAG}" .
-          docker push "${DOCKER_TAG}""
+          docker push "${DOCKER_TAG}"
 
 
       - id: "deploy"

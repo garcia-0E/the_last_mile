@@ -1,0 +1,17 @@
+[project]
+name = "the-last-mile"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "asyncpg>=0.29.0",
+    "google-cloud-aiplatform>=1.38.0",
+    "google-cloud-bigquery[pandas]>=3.0.0",
+    "google-cloud-pubsub>=2.0.0",
+    "pandas>=2.0.0",
+    "qdrant-client>=1.17.0",
+    "sanic==25.12.0",
+    "sanic-ext>=24.12.0",
+    "sentence-transformers>=2.2.0",
+]

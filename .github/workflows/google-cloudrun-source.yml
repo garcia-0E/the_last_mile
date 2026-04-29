@@ -46,7 +46,8 @@ jobs:
         name: "Build and Push Container"
         run: |-
           DOCKER_TAG="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/server:${{ github.sha }}"
-          docker build --tag "${DOCKER_TAG}" .
+          docker build --tag "${DOCKER_TAG}" --build-arg PG_DATABASE=${{ secrets.PG_DATABASE }} --build-arg PG_HOST=${{ secrets.PG_HOST }} --build-arg PG_PORT=${{ secrets.PG_PORT }} --build-arg PG_USER=${{ secrets.PG_USER }} --build-arg PG_PASSWORD=${{ secrets.PG_PASSWORD }}
+          --build-arg QDRANT_HOST=${{ secrets.QDRANT_HOST }} --build-arg QDRANT_API_KEY=${{ secrets.QDRANT_API_KEY }} --build-arg QDRANT_GRPC=${{ secrets.QDRANT_GRPC }} --build-arg QDRANT_PORT=${{ secrets.QDRANT_PORT }}.
           docker push "${DOCKER_TAG}"
 
 

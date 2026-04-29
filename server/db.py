@@ -5,6 +5,25 @@ a Qdrant vector database or a PostgreSQL relational database.  The concrete
 backend is selected via the ``DB_BACKEND`` environment variable
 (``"qdrant"`` | ``"postgres"``).
 
+Environment variables (Postgres backend)
+----------------------------------------
+Production (Cloud Run + Cloud SQL Auth Proxy):
+    INSTANCE_CONNECTION_NAME  ``project:region:instance`` — flips the
+                              connection into Unix-socket mode and reads
+                              from ``<DB_SOCKET_DIR>/<value>`` (default
+                              ``/cloudsql``).
+    PG_USER, PG_PASSWORD, PG_DATABASE
+                              Application credentials (``PG_PASSWORD`` is
+                              expected to come from Secret Manager).
+
+Local development (Cloud SQL Auth Proxy on 127.0.0.1, or a local Postgres):
+    PG_HOST, PG_PORT          TCP target, e.g. ``127.0.0.1:5432``.
+    PG_USER, PG_PASSWORD, PG_DATABASE
+                              As above.
+
+If ``INSTANCE_CONNECTION_NAME`` is set it always wins; otherwise the TCP
+branch is used.
+
 Filter format
 -------------
 The ``filters`` parameter accepted by :meth:`DBClient.query` supports two
@@ -95,31 +114,37 @@ def _pg_config() -> Dict[str, Any]:
       with the Cloud SQL Auth Proxy sidecar).  Selected automatically when
       ``INSTANCE_CONNECTION_NAME`` is set, e.g.
       ``my-project:us-central1:my-instance``.  The host is set to the
-      socket path ``<DB_SOCKET_DIR>/<INSTANCE_CONNECTION_NAME>`` (defaults
-      to ``/cloudsql/...``); ``asyncpg`` switches to Unix-socket mode when
-      the host starts with ``/`` and no port is required.
+      socket directory ``<DB_SOCKET_DIR>/<INSTANCE_CONNECTION_NAME>``
+      (defaults to ``/cloudsql/...``); ``asyncpg`` switches to Unix-socket
+      mode when the host starts with ``/``.  The port is still required
+      because ``asyncpg`` uses it to locate the socket file
+      ``<host>/.s.PGSQL.<port>`` (Cloud SQL Postgres always listens on
+      5432).
 
     * **TCP** — used for local development and any environment where
       ``INSTANCE_CONNECTION_NAME`` is not present.  Requires ``PG_HOST``
       and ``PG_PORT``.
 
     ``PG_USER``, ``PG_PASSWORD`` and ``PG_DATABASE`` are required in both
-    modes.
+    modes; ``PG_PASSWORD`` and (in TCP mode) ``PG_HOST`` have no defaults
+    so misconfiguration fails loudly instead of silently targeting a
+    stale public IP.
     """
     cfg: Dict[str, Any] = {
         "user": os.environ.get("PG_USER", "postgres"),
-        "password": os.environ.get("PG_PASSWORD", "{KrGC|X:yc/q#FmR"),
+        "password": _require_env("PG_PASSWORD"),
         "database": os.environ.get("PG_DATABASE", "postgres"),
+        "port": int(os.environ.get("PG_PORT", "5432")),
     }
 
     instance = os.environ.get("INSTANCE_CONNECTION_NAME")
     if instance:
         socket_dir = os.environ.get("DB_SOCKET_DIR", "/cloudsql")
+        # asyncpg treats a host starting with '/' as a Unix-socket dir and
+        # looks for '<host>/.s.PGSQL.<port>'.
         cfg["host"] = f"{socket_dir}/{instance}"
-        # Unix-socket connections do not use a TCP port.
     else:
-        cfg["host"] = os.environ.get("PG_HOST", "34.41.70.34")
-        cfg["port"] = int(os.environ.get("PG_PORT", "5432"))
+        cfg["host"] = _require_env("PG_HOST")
 
     return cfg
 
@@ -476,11 +501,13 @@ class PostgresClient(DBClient):
         import asyncpg
 
         cfg = _pg_config()
-        target = (
-            f"{cfg['host']}:{cfg['port']}/{cfg['database']}"
-            if "port" in cfg
-            else f"{cfg['host']}/{cfg['database']}"
-        )
+        # Unix-socket connections still carry a port (used to locate the
+        # socket file) but it isn't part of a network address, so log it
+        # differently from TCP for clarity.
+        if cfg["host"].startswith("/"):
+            target = f"{cfg['host']}/.s.PGSQL.{cfg['port']} ({cfg['database']})"
+        else:
+            target = f"{cfg['host']}:{cfg['port']}/{cfg['database']}"
         logger.info(f"Connecting to PostgreSQL at {target}")
         self._pool = await asyncpg.create_pool(
             min_size=1,

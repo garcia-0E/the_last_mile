@@ -1,25 +1,24 @@
 """Relational queries for the company / prompt tables.
 
 These tables live in PostgreSQL regardless of the vector DB backend
-selected via ``DB_BACKEND``.  A dedicated connection is used so the
-vector-search singleton in ``db.py`` is not affected.
+selected via ``DB_BACKEND``.  They share the same ``asyncpg`` connection
+pool used by the vector-search singleton in :mod:`db` to avoid opening a
+second connection to the same database.
 
 Usage:
-    from services import get_companies, get_prompts
+    from services import init_pool, close_pool, get_companies, get_prompts
 
-    companies = get_companies()
-    prompts   = get_prompts(company_id=1)
+    await init_pool()
+    companies = await get_companies()
+    prompts   = await get_prompts(company_id=1)
+    await close_pool()
 """
 
 from typing import Any, Dict, List, Optional, Tuple
 
-import psycopg2
-from psycopg2.extras import RealDictCursor
 from sanic.log import logger
 
-from db import PG_HOST, PG_PORT, PG_USER, PG_PASSWORD, PG_DATABASE
-
-_conn = None
+from db import _pg_config
 
 # Mapping from the filter key exposed by the API/UI to the
 # (table, column) pair holding its allowed values in Postgres.
@@ -34,48 +33,89 @@ PARTNER_FILTER_LOOKUP_TABLES: Dict[str, Tuple[str, str]] = {
 }
 
 
-def _get_conn():
-    """Return a shared psycopg2 connection (lazy-initialised)."""
-    global _conn
-    if _conn is None or _conn.closed:
-        logger.info("Opening relational PG connection for services")
-        _conn = psycopg2.connect(
-            host=PG_HOST,
-            port=PG_PORT,
-            user=PG_USER,
-            password=PG_PASSWORD,
-            dbname=PG_DATABASE,
+# ---------------------------------------------------------------------------
+# Pool management
+# ---------------------------------------------------------------------------
+# This module supports two modes:
+#   1. Owned pool — call ``init_pool()`` at startup; closed by ``close_pool()``.
+#   2. Shared pool — call ``set_pool(pool)`` with the pool from a
+#      :class:`db.PostgresClient` instance to reuse the same connections.
+_pool = None  # type: Optional[Any]
+
+
+def set_pool(pool) -> None:
+    """Reuse an externally-managed asyncpg pool (preferred for the server)."""
+    global _pool
+    _pool = pool
+
+
+async def init_pool() -> None:
+    """Open a dedicated asyncpg pool for relational queries.
+
+    Use this when no shared pool is available (e.g. scripts or tests).
+    """
+    global _pool
+    if _pool is not None:
+        return
+
+    import asyncpg
+
+    cfg = _pg_config()
+    logger.info("Opening relational PG pool for services (host=%s)", cfg["host"])
+    _pool = await asyncpg.create_pool(
+        min_size=1,
+        max_size=5,
+        **cfg,
+    )
+
+
+async def close_pool() -> None:
+    """Close the pool opened by :func:`init_pool`. No-op for shared pools."""
+    global _pool
+    if _pool is None:
+        return
+    await _pool.close()
+    _pool = None
+
+
+def _get_pool():
+    if _pool is None:
+        raise RuntimeError(
+            "services pool is not initialised — call init_pool() or set_pool()"
         )
-        _conn.autocommit = True
-    return _conn
+    return _pool
 
 
-def get_companies() -> List[Dict[str, Any]]:
+# ---------------------------------------------------------------------------
+# Queries
+# ---------------------------------------------------------------------------
+
+async def get_companies() -> List[Dict[str, Any]]:
     """Return all companies ordered by name."""
-    conn = _get_conn()
-    with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute(
+    pool = _get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
             "SELECT id, name, description "
             "FROM company ORDER BY name"
         )
-        return [dict(row) for row in cur.fetchall()]
+        return [dict(row) for row in rows]
 
 
-def get_prompts(company_id: int) -> List[Dict[str, Any]]:
+async def get_prompts(company_id: int) -> List[Dict[str, Any]]:
     """Return prompts for a given company, active ones first."""
-    conn = _get_conn()
-    with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute(
+    pool = _get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
             "SELECT id, company_id, name, template, is_active "
             "FROM prompt "
-            "WHERE company_id = %s "
+            "WHERE company_id = $1 "
             "ORDER BY is_active DESC, created_at DESC",
-            (company_id,),
+            company_id,
         )
-        return [dict(row) for row in cur.fetchall()]
+        return [dict(row) for row in rows]
 
 
-def get_partner_filter_options() -> Dict[str, List[str]]:
+async def get_partner_filter_options() -> Dict[str, List[str]]:
     """Return the allowed values for each single-value partner filter.
 
     Each filter is backed by a dedicated lookup table in Postgres (see
@@ -83,64 +123,58 @@ def get_partner_filter_options() -> Dict[str, List[str]]:
     Tables that do not exist yet (or are otherwise unreadable) return an
     empty list so the UI can still render the field.
     """
-    conn = _get_conn()
+    pool = _get_pool()
     options: Dict[str, List[str]] = {}
 
-    for filter_key, (table, column) in PARTNER_FILTER_LOOKUP_TABLES.items():
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
+    async with pool.acquire() as conn:
+        for filter_key, (table, column) in PARTNER_FILTER_LOOKUP_TABLES.items():
+            try:
+                rows = await conn.fetch(
                     f"SELECT {column} FROM {table} "
                     f"WHERE {column} IS NOT NULL AND {column} <> '' "
                     f"ORDER BY {column}"
                 )
-                options[filter_key] = [row[0] for row in cur.fetchall()]
-        except Exception as exc:
-            logger.warning(
-                "get_partner_filter_options: skipping %s.%s (%s)",
-                table, column, exc,
-            )
-            try:
-                conn.rollback()
-            except Exception:
-                pass
-            options[filter_key] = []
+                options[filter_key] = [row[0] for row in rows]
+            except Exception as exc:
+                logger.warning(
+                    "get_partner_filter_options: skipping %s.%s (%s)",
+                    table, column, exc,
+                )
+                options[filter_key] = []
 
     return options
 
 
-def update_prompt(prompt_id: int, template: str) -> Optional[Dict[str, Any]]:
+async def update_prompt(prompt_id: int, template: str) -> Optional[Dict[str, Any]]:
     """Update the ``template`` field of a prompt.
 
     Returns:
         The updated prompt row as a dict, or ``None`` if no prompt with that
         ID exists.
     """
-    conn = _get_conn()
-    with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute(
-            "UPDATE prompt SET template = %s "
-            "WHERE id = %s "
+    pool = _get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "UPDATE prompt SET template = $1 "
+            "WHERE id = $2 "
             "RETURNING id, company_id, name, template, is_active",
-            (template, prompt_id),
+            template, prompt_id,
         )
-        row = cur.fetchone()
         return dict(row) if row else None
 
 
-def get_active_prompt(company_id: int, name: str) -> Optional[str]:
+async def get_active_prompt(company_id: int, name: str) -> Optional[str]:
     """Return the template of the single active prompt for a company and name.
 
     Returns:
         The template string, or ``None`` if no active prompt is found.
     """
-    conn = _get_conn()
-    with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute(
+    pool = _get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
             "SELECT template FROM prompt "
-            "WHERE company_id = %s AND name = %s AND is_active = TRUE "
+            "WHERE company_id = $1 AND name = $2 AND is_active = TRUE "
             "LIMIT 1",
-            (company_id, name),
+            company_id, name,
         )
-        row = cur.fetchone()
         return row["template"] if row else None

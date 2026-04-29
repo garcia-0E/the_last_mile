@@ -37,12 +37,13 @@ Usage:
     from db import get_client
 
     client = get_client()
-    client.connect()
-    client.upsert("my_collection", records)
-    results = client.query("my_collection", vector=embedding, top_k=5)
-    client.disconnect()
+    await client.connect()
+    await client.upsert("my_collection", records)
+    results = await client.query("my_collection", vector=embedding, top_k=5)
+    await client.disconnect()
 """
 
+import asyncio
 import os
 import uuid
 from abc import ABC, abstractmethod
@@ -55,16 +56,72 @@ from sanic.log import logger
 # ---------------------------------------------------------------------------
 DB_BACKEND = os.environ.get("DB_BACKEND", "qdrant")
 
-QDRANT_HOST = os.environ.get("QDRANT_HOST", "e4b7056d-bf13-4771-bf21-aac0a0c5563f.europe-west3-0.gcp.cloud.qdrant.io")
-QDRANT_PORT = int(os.environ.get("QDRANT_PORT", "6333"))
-QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.OrmvGmATwHO4l2lqULhOYkmHpeXWL3Rr0752l8Mhqcc")
-QDRANT_GRPC = os.environ.get("QDRANT_GRPC", "false").lower() == "true"
 
-PG_HOST = os.environ.get("PG_HOST", "34.41.70.34")
-PG_PORT = int(os.environ.get("PG_PORT", "5432"))
-PG_USER = os.environ.get("PG_USER", "postgres")
-PG_PASSWORD = os.environ.get("PG_PASSWORD", "{KrGC|X:yc/q#FmR")
-PG_DATABASE = os.environ.get("PG_DATABASE", "postgres")
+def _require_env(name: str) -> str:
+    """Return the value of ``name`` from the environment or raise.
+
+    Used for credentials and connection-target variables that must never have
+    a hard-coded fallback in source.
+    """
+    value = os.environ.get(name)
+    if value is None or value == "":
+        raise RuntimeError(
+            f"Required environment variable '{name}' is not set"
+        )
+    return value
+
+
+# ---------------------------------------------------------------------------
+# Lazy config accessors
+# ---------------------------------------------------------------------------
+# These are looked up on demand so that a process which only uses one backend
+# does not need to set the other backend's variables.
+
+def _qdrant_config() -> Dict[str, Any]:
+    return {
+        "host": _require_env("QDRANT_HOST"),
+        "port": int(_require_env("QDRANT_PORT")),
+        "api_key": _require_env("QDRANT_API_KEY", ),
+        "prefer_grpc": os.environ.get("QDRANT_GRPC", "false").lower() == "true",
+    }
+
+
+def _pg_config() -> Dict[str, Any]:
+    """Build asyncpg connection kwargs for the configured Postgres target.
+
+    Two connection modes are supported:
+
+    * **Cloud SQL via Unix socket** (preferred on Cloud Run / GAE / GKE
+      with the Cloud SQL Auth Proxy sidecar).  Selected automatically when
+      ``INSTANCE_CONNECTION_NAME`` is set, e.g.
+      ``my-project:us-central1:my-instance``.  The host is set to the
+      socket path ``<DB_SOCKET_DIR>/<INSTANCE_CONNECTION_NAME>`` (defaults
+      to ``/cloudsql/...``); ``asyncpg`` switches to Unix-socket mode when
+      the host starts with ``/`` and no port is required.
+
+    * **TCP** — used for local development and any environment where
+      ``INSTANCE_CONNECTION_NAME`` is not present.  Requires ``PG_HOST``
+      and ``PG_PORT``.
+
+    ``PG_USER``, ``PG_PASSWORD`` and ``PG_DATABASE`` are required in both
+    modes.
+    """
+    cfg: Dict[str, Any] = {
+        "user": _require_env("PG_USER"),
+        "password": _require_env("PG_PASSWORD"),
+        "database": _require_env("PG_DATABASE"),
+    }
+
+    instance = os.environ.get("INSTANCE_CONNECTION_NAME")
+    if instance:
+        socket_dir = os.environ.get("DB_SOCKET_DIR", "/cloudsql")
+        cfg["host"] = f"{socket_dir}/{instance}"
+        # Unix-socket connections do not use a TCP port.
+    else:
+        cfg["host"] = _require_env("PG_HOST")
+        cfg["port"] = int(_require_env("PG_PORT"))
+
+    return cfg
 
 
 # ---------------------------------------------------------------------------
@@ -74,15 +131,15 @@ class DBClient(ABC):
     """Common contract that every backend must implement."""
 
     @abstractmethod
-    def connect(self) -> None:
+    async def connect(self) -> None:
         """Establish a connection to the database."""
 
     @abstractmethod
-    def disconnect(self) -> None:
+    async def disconnect(self) -> None:
         """Tear down the connection."""
 
     @abstractmethod
-    def upsert(self, collection: str, records: List[Dict[str, Any]]) -> None:
+    async def upsert(self, collection: str, records: List[Dict[str, Any]]) -> None:
         """Insert or update *records* in *collection*.
 
         Each record is a dict with at least:
@@ -91,7 +148,7 @@ class DBClient(ABC):
         """
 
     @abstractmethod
-    def query(
+    async def query(
         self,
         collection: str,
         *,
@@ -106,7 +163,7 @@ class DBClient(ABC):
         """
 
     @abstractmethod
-    def ensure_indexes(
+    async def ensure_indexes(
         self,
         collection: str,
         fields: List[str],
@@ -126,11 +183,11 @@ class DBClient(ABC):
         """
 
     @abstractmethod
-    def delete(self, collection: str, ids: List[str]) -> None:
+    async def delete(self, collection: str, ids: List[str]) -> None:
         """Remove records by id from *collection*."""
 
     @abstractmethod
-    def list_values(
+    async def list_values(
         self,
         collection: str,
         fields: List[str],
@@ -159,33 +216,40 @@ class DBClient(ABC):
 # Qdrant implementation
 # ---------------------------------------------------------------------------
 class QdrantClient(DBClient):
-    """Thin wrapper around the official ``qdrant-client`` package."""
+    """Thin wrapper around the official ``qdrant-client`` package.
+
+    The underlying client is synchronous; every method offloads its blocking
+    calls with :func:`asyncio.to_thread` so the surrounding event loop stays
+    responsive.
+    """
 
     def __init__(self) -> None:
         self._client = None
 
-    def connect(self) -> None:
+    async def connect(self) -> None:
         if self._client is not None:
             return
 
         from qdrant_client import QdrantClient as _QdrantClient
 
-        logger.info(f"Connecting to Qdrant at {QDRANT_HOST}:{QDRANT_PORT}")
-        self._client = _QdrantClient(
-            host=QDRANT_HOST,
-            port=QDRANT_PORT,
-            api_key=QDRANT_API_KEY or None,
-            prefer_grpc=QDRANT_GRPC,
+        cfg = _qdrant_config()
+        logger.info(f"Connecting to Qdrant at {cfg['host']}:{cfg['port']}")
+        self._client = await asyncio.to_thread(
+            _QdrantClient,
+            host=cfg["host"],
+            port=cfg["port"],
+            api_key=cfg["api_key"] or None,
+            prefer_grpc=cfg["prefer_grpc"],
         )
         logger.info("Qdrant connection established")
 
-    def disconnect(self) -> None:
+    async def disconnect(self) -> None:
         if self._client is not None:
-            self._client.close()
+            await asyncio.to_thread(self._client.close)
             self._client = None
             logger.info("Qdrant connection closed")
 
-    def ensure_indexes(
+    async def ensure_indexes(
         self,
         collection: str,
         fields: List[str],
@@ -201,7 +265,8 @@ class QdrantClient(DBClient):
         schema = schema_map.get(index_type, PayloadSchemaType.TEXT)
 
         for field in fields:
-            self._client.create_payload_index(
+            await asyncio.to_thread(
+                self._client.create_payload_index,
                 collection_name=collection,
                 field_name=field,
                 field_schema=schema,
@@ -211,15 +276,19 @@ class QdrantClient(DBClient):
                 index_type, field, collection,
             )
 
-    def upsert(self, collection: str, records: List[Dict[str, Any]]) -> None:
+    async def upsert(self, collection: str, records: List[Dict[str, Any]]) -> None:
         from qdrant_client.models import Distance, PointStruct, VectorParams
 
         if not records:
             return
 
-        if not self._client.collection_exists(collection):
+        exists = await asyncio.to_thread(
+            self._client.collection_exists, collection
+        )
+        if not exists:
             vector_size = len(records[0]["vector"])
-            self._client.create_collection(
+            await asyncio.to_thread(
+                self._client.create_collection,
                 collection_name=collection,
                 vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
             )
@@ -233,7 +302,9 @@ class QdrantClient(DBClient):
             )
             for record in records
         ]
-        self._client.upsert(collection_name=collection, points=points)
+        await asyncio.to_thread(
+            self._client.upsert, collection_name=collection, points=points
+        )
         logger.info(f"Upserted {len(points)} points into Qdrant collection '{collection}'")
 
     # -- Filter helpers --------------------------------------------------------
@@ -285,7 +356,7 @@ class QdrantClient(DBClient):
             must_not=must_not or None,
         )
 
-    def query(
+    async def query(
         self,
         collection: str,
         *,
@@ -298,7 +369,8 @@ class QdrantClient(DBClient):
 
         query_filter = self._build_filter(filters) if filters else None
 
-        results = self._client.query_points(
+        results = await asyncio.to_thread(
+            self._client.query_points,
             collection_name=collection,
             query=vector,
             query_filter=query_filter,
@@ -309,16 +381,17 @@ class QdrantClient(DBClient):
             for hit in results.points
         ]
 
-    def delete(self, collection: str, ids: List[str]) -> None:
+    async def delete(self, collection: str, ids: List[str]) -> None:
         from qdrant_client.models import PointIdsList
 
-        self._client.delete(
+        await asyncio.to_thread(
+            self._client.delete,
             collection_name=collection,
             points_selector=PointIdsList(points=ids),
         )
         logger.info(f"Deleted {len(ids)} points from Qdrant collection '{collection}'")
 
-    def list_values(
+    async def list_values(
         self,
         collection: str,
         fields: List[str],
@@ -326,7 +399,10 @@ class QdrantClient(DBClient):
         limit_per_field: int = 500,
         scan_limit: int = 5000,
     ) -> Dict[str, List[Any]]:
-        if not self._client.collection_exists(collection):
+        exists = await asyncio.to_thread(
+            self._client.collection_exists, collection
+        )
+        if not exists:
             logger.warning("Collection '%s' does not exist; returning empty values", collection)
             return {field: [] for field in fields}
 
@@ -337,7 +413,8 @@ class QdrantClient(DBClient):
 
         while scanned < scan_limit:
             batch_size = min(page_size, scan_limit - scanned)
-            points, next_offset = self._client.scroll(
+            points, next_offset = await asyncio.to_thread(
+                self._client.scroll,
                 collection_name=collection,
                 with_payload=fields,
                 with_vectors=False,
@@ -374,51 +451,67 @@ class QdrantClient(DBClient):
 # PostgreSQL implementation
 # ---------------------------------------------------------------------------
 class PostgresClient(DBClient):
-    """Backend powered by ``psycopg2``."""
+    """Backend powered by ``asyncpg`` — exposes the relational store via an
+    :class:`asyncpg.Pool` so multiple coroutines can share connections safely.
+    """
 
     def __init__(self) -> None:
-        self._conn = None
+        self._pool = None  # type: Optional[Any]
 
-    def connect(self) -> None:
-        if self._conn is not None:
+    @property
+    def pool(self):
+        """Return the underlying ``asyncpg`` pool.
+
+        Other modules (e.g. ``services``) can reuse this pool instead of
+        opening their own connections to the same database.
+        """
+        if self._pool is None:
+            raise RuntimeError("PostgresClient.connect() has not been called")
+        return self._pool
+
+    async def connect(self) -> None:
+        if self._pool is not None:
             return
 
-        import psycopg2
+        import asyncpg
 
-        logger.info(f"Connecting to PostgreSQL at {PG_HOST}:{PG_PORT}/{PG_DATABASE}")
-        self._conn = psycopg2.connect(
-            host=PG_HOST,
-            port=PG_PORT,
-            user=PG_USER,
-            password=PG_PASSWORD,
-            dbname=PG_DATABASE,
+        cfg = _pg_config()
+        target = (
+            f"{cfg['host']}:{cfg['port']}/{cfg['database']}"
+            if "port" in cfg
+            else f"{cfg['host']}/{cfg['database']}"
         )
-        self._conn.autocommit = True
-        logger.info("PostgreSQL connection established")
+        logger.info(f"Connecting to PostgreSQL at {target}")
+        self._pool = await asyncpg.create_pool(
+            min_size=1,
+            max_size=10,
+            **cfg,
+        )
+        logger.info("PostgreSQL connection pool established")
 
-    def disconnect(self) -> None:
-        if self._conn is not None:
-            self._conn.close()
-            self._conn = None
-            logger.info("PostgreSQL connection closed")
+    async def disconnect(self) -> None:
+        if self._pool is not None:
+            await self._pool.close()
+            self._pool = None
+            logger.info("PostgreSQL connection pool closed")
 
-    def ensure_indexes(
+    async def ensure_indexes(
         self,
         collection: str,
         fields: List[str],
         *,
         index_type: str = "text",
     ) -> None:
-        with self._conn.cursor() as cur:
+        async with self._pool.acquire() as conn:
             for field in fields:
                 idx_name = f"idx_{collection}_{field}"
                 if index_type == "text":
-                    cur.execute(
+                    await conn.execute(
                         f"CREATE INDEX IF NOT EXISTS {idx_name} "
                         f"ON {collection} USING gin (to_tsvector('english', {field}))"
                     )
                 else:
-                    cur.execute(
+                    await conn.execute(
                         f"CREATE INDEX IF NOT EXISTS {idx_name} "
                         f"ON {collection} ({field})"
                     )
@@ -427,13 +520,13 @@ class PostgresClient(DBClient):
                     index_type, field, collection,
                 )
 
-    def upsert(self, collection: str, records: List[Dict[str, Any]]) -> None:
+    async def upsert(self, collection: str, records: List[Dict[str, Any]]) -> None:
         if not records:
             return
 
         payload_keys = list(records[0].get("payload", {}).keys())
         columns = ["id"] + payload_keys
-        placeholders = ", ".join(["%s"] * len(columns))
+        placeholders = ", ".join(f"${i + 1}" for i in range(len(columns)))
         update_clause = ", ".join(f"{col} = EXCLUDED.{col}" for col in payload_keys)
 
         sql = (
@@ -442,30 +535,34 @@ class PostgresClient(DBClient):
             f"ON CONFLICT (id) DO UPDATE SET {update_clause}"
         )
 
-        with self._conn.cursor() as cur:
-            for record in records:
-                row_id = record.get("id", str(uuid.uuid4()))
-                values = [row_id] + [record.get("payload", {}).get(k) for k in payload_keys]
-                cur.execute(sql, values)
+        rows = []
+        for record in records:
+            row_id = record.get("id", str(uuid.uuid4()))
+            payload = record.get("payload", {})
+            rows.append([row_id] + [payload.get(k) for k in payload_keys])
+
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.executemany(sql, rows)
 
         logger.info(f"Upserted {len(records)} rows into PostgreSQL table '{collection}'")
 
     # -- Filter helpers --------------------------------------------------------
 
     @staticmethod
-    def _build_clause(cond: Dict[str, Any]) -> tuple:
-        """Return a (sql_fragment, param) pair for a single condition dict."""
+    def _build_clause(cond: Dict[str, Any], next_idx: int) -> tuple:
+        """Return ``(sql_fragment, param)`` for *cond* using ``$next_idx``."""
         key = cond["key"]
         if "match" in cond:
-            return f"{key} = %s", cond["match"]
+            return f"{key} = ${next_idx}", cond["match"]
         if "match_text" in cond:
-            return f"{key} ILIKE %s", f"%{cond['match_text']}%"
+            return f"{key} ILIKE ${next_idx}", f"%{cond['match_text']}%"
         raise ValueError(f"Unsupported condition format: {cond}")
 
     def _build_where(self, filters: Dict[str, Any]) -> tuple:
         """Translate a backend-agnostic filter dict into a SQL WHERE clause.
 
-        Returns ``(where_sql, params)``.
+        Returns ``(where_sql, params)`` with positional ``$N`` placeholders.
         """
         parts: List[str] = []
         params: List[Any] = []
@@ -473,8 +570,8 @@ class PostgresClient(DBClient):
         # Simple flat dict — backward compat.
         if not any(k in filters for k in ("must", "should", "must_not")):
             for key, value in filters.items():
-                parts.append(f"{key} = %s")
                 params.append(value)
+                parts.append(f"{key} = ${len(params)}")
             where = " AND ".join(parts)
             return (f" WHERE {where}" if where else ""), params
 
@@ -485,32 +582,32 @@ class PostgresClient(DBClient):
             if "should" in cond:
                 or_parts = []
                 for c in cond["should"]:
-                    sql, param = self._build_clause(c)
+                    sql, param = self._build_clause(c, len(params) + 1)
                     or_parts.append(sql)
                     params.append(param)
                 and_clauses.append(f"({' OR '.join(or_parts)})")
             else:
-                sql, param = self._build_clause(cond)
+                sql, param = self._build_clause(cond, len(params) + 1)
                 and_clauses.append(sql)
                 params.append(param)
 
         if filters.get("should"):
             or_parts = []
             for c in filters["should"]:
-                sql, param = self._build_clause(c)
+                sql, param = self._build_clause(c, len(params) + 1)
                 or_parts.append(sql)
                 params.append(param)
             and_clauses.append(f"({' OR '.join(or_parts)})")
 
         for cond in filters.get("must_not", []):
-            sql, param = self._build_clause(cond)
+            sql, param = self._build_clause(cond, len(params) + 1)
             and_clauses.append(f"NOT ({sql})")
             params.append(param)
 
         where = " AND ".join(and_clauses)
         return (f" WHERE {where}" if where else ""), params
 
-    def query(
+    async def query(
         self,
         collection: str,
         *,
@@ -523,26 +620,25 @@ class PostgresClient(DBClient):
         else:
             where_clause, params = "", []
 
-        sql = f"SELECT * FROM {collection}{where_clause} LIMIT %s"
         params.append(top_k)
+        sql = f"SELECT * FROM {collection}{where_clause} LIMIT ${len(params)}"
 
-        with self._conn.cursor() as cur:
-            cur.execute(sql, params)
-            col_names = [desc[0] for desc in cur.description]
-            return [dict(zip(col_names, row)) for row in cur.fetchall()]
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(sql, *params)
+            return [dict(row) for row in rows]
 
-    def delete(self, collection: str, ids: List[str]) -> None:
+    async def delete(self, collection: str, ids: List[str]) -> None:
         if not ids:
             return
-        placeholders = ", ".join(["%s"] * len(ids))
+        placeholders = ", ".join(f"${i + 1}" for i in range(len(ids)))
         sql = f"DELETE FROM {collection} WHERE id IN ({placeholders})"
 
-        with self._conn.cursor() as cur:
-            cur.execute(sql, ids)
+        async with self._pool.acquire() as conn:
+            await conn.execute(sql, *ids)
 
         logger.info(f"Deleted {len(ids)} rows from PostgreSQL table '{collection}'")
 
-    def list_values(
+    async def list_values(
         self,
         collection: str,
         fields: List[str],
@@ -552,23 +648,22 @@ class PostgresClient(DBClient):
     ) -> Dict[str, List[Any]]:
         result: Dict[str, List[Any]] = {field: [] for field in fields}
 
-        with self._conn.cursor() as cur:
+        async with self._pool.acquire() as conn:
             for field in fields:
                 try:
-                    cur.execute(
+                    rows = await conn.fetch(
                         f"SELECT DISTINCT {field} FROM {collection} "
                         f"WHERE {field} IS NOT NULL AND {field} <> '' "
-                        f"ORDER BY {field} LIMIT %s",
-                        (limit_per_field,),
+                        f"ORDER BY {field} LIMIT $1",
+                        limit_per_field,
                     )
-                    result[field] = [row[0] for row in cur.fetchall()]
+                    result[field] = [row[0] for row in rows]
                 except Exception as exc:
                     # Column may not exist yet — fall back to empty list.
                     logger.warning(
                         "list_values: skipping '%s.%s' (%s)",
                         collection, field, exc,
                     )
-                    self._conn.rollback()
                     result[field] = []
 
         return result

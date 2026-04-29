@@ -78,14 +78,14 @@ MISSION_SEARCH_TEXT: str = (
 # Index helper
 # ---------------------------------------------------------------------------
 
-def ensure_partner_indexes(client: DBClient) -> None:
+async def ensure_partner_indexes(client: DBClient) -> None:
     """Create the text indexes needed by the partner-search filters.
 
     Only fields that are part of the ingestion payload today are indexed.
     Future fields (``stage``, ``partnership_types``, ``partnership_offer``)
     can be added once the ingestion pipeline starts persisting them.
     """
-    client.ensure_indexes(
+    await client.ensure_indexes(
         COLLECTION_NAME,
         ["industry", "title", "company_name", "email", "country", "seniority"],
         index_type="text",
@@ -96,7 +96,7 @@ def ensure_partner_indexes(client: DBClient) -> None:
 # Filter options endpoint helper
 # ---------------------------------------------------------------------------
 
-def get_partner_filters(client: DBClient) -> Dict[str, List[Any]]:
+async def get_partner_filters(client: DBClient) -> Dict[str, List[Any]]:
     """Return the available values for each DB-backed partner filter.
 
     Sources are split by where each field lives:
@@ -113,7 +113,7 @@ def get_partner_filters(client: DBClient) -> Dict[str, List[Any]]:
     response: Dict[str, List[Any]] = {}
 
     # 1. Filters whose values live in Postgres only.
-    response.update(get_partner_filter_options())
+    response.update(await get_partner_filter_options())
 
     # 2. Filters whose values live on the contact payload in Qdrant.
     all_qdrant_keys = {
@@ -127,7 +127,7 @@ def get_partner_filters(client: DBClient) -> Dict[str, List[Any]]:
         if ui_key not in PARTNER_FILTER_LOOKUP_TABLES
     }
     underlying_fields = sorted(set(qdrant_keys.values()))
-    raw = client.list_values(COLLECTION_NAME, underlying_fields)
+    raw = await client.list_values(COLLECTION_NAME, underlying_fields)
     for ui_key, payload_field in qdrant_keys.items():
         response[ui_key] = raw.get(payload_field, [])
 
@@ -233,7 +233,7 @@ def build_partner_filter(
 # Search entry point
 # ---------------------------------------------------------------------------
 
-def search_partners(
+async def search_partners(
     client: DBClient,
     query_vector: List[float],
     *,
@@ -252,7 +252,7 @@ def search_partners(
         company_name_to_exclude=company_name_to_exclude,
     )
 
-    return client.query(
+    return await client.query(
         COLLECTION_NAME,
         vector=query_vector,
         filters=filters,
@@ -264,7 +264,7 @@ def search_partners(
 # Convenience: embed + search in one call
 # ---------------------------------------------------------------------------
 
-def discover_partners(
+async def discover_partners(
     client: DBClient,
     *,
     description: Optional[str] = None,
@@ -297,7 +297,7 @@ def discover_partners(
     model = _get_model()
     vector = model.encode(text).tolist()
 
-    return search_partners(
+    return await search_partners(
         client,
         query_vector=vector,
         country=country,

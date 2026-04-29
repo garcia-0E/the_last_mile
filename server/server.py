@@ -10,9 +10,10 @@ from sanic_ext import openapi
 from sanic.worker.manager import WorkerManager
 from enhancer import normalize_dataframe
 from embedder import embed
-from db import get_client
+from db import get_client, PostgresClient
 from query import discover_partners, ensure_partner_indexes, get_partner_filters
 from drafts import generate_drafts
+import services
 from services import get_companies, get_prompts, update_prompt
 
 
@@ -79,8 +80,24 @@ app.ext.openapi.describe(
 async def startup(_app):
     """Connect to the DB and create indexes once at startup."""
     client = get_client()
-    client.connect()
-    ensure_partner_indexes(client)
+    await client.connect()
+    await ensure_partner_indexes(client)
+
+    # The relational ``services`` module needs its own asyncpg pool. If the
+    # configured DB backend is already Postgres, reuse its pool; otherwise
+    # open a dedicated one.
+    if isinstance(client, PostgresClient):
+        services.set_pool(client.pool)
+    else:
+        await services.init_pool()
+
+
+@app.before_server_stop
+async def shutdown(_app):
+    """Close DB connections cleanly on shutdown."""
+    client = get_client()
+    await services.close_pool()
+    await client.disconnect()
 
 @app.post("/enhancer")
 @openapi.summary("Enhance & embed leads")
@@ -99,7 +116,7 @@ async def tfm_enhancer(request: Request):
         n_df = normalize_dataframe(df)
         e_df = embed(n_df)
         # publish_file_message(e_df)
-        get_client().upsert("tfm_leads", e_df)
+        await get_client().upsert("tfm_leads", e_df)
         return json_response({"message": "File received and processed successfully!"})
     return text("Hello World from the Built image!")
 
@@ -114,7 +131,7 @@ async def tfm_enhancer(request: Request):
 @openapi.tag("partners")
 async def tfm_suggester(request: Request):
     body = request.json or {}
-    response = discover_partners(
+    response = await discover_partners(
             client=get_client(),
             description=body.get("description"),
             themes=body.get("themes"),
@@ -141,7 +158,7 @@ async def tfm_suggester(request: Request):
 @openapi.response(200, {"application/json": FiltersResponse}, description="Filter options")
 @openapi.tag("partners")
 async def tfm_filters(request: Request):
-    return json_response(get_partner_filters(get_client()))
+    return json_response(await get_partner_filters(get_client()))
 
 
 @app.post("/drafts")
@@ -178,7 +195,7 @@ async def tfm_drafts(request: Request):
 @openapi.response(200, description="List of companies")
 @openapi.tag("companies")
 async def tfm_companies(request: Request):
-    companies = get_companies()
+    companies = await get_companies()
     return json_response(companies)
 
 
@@ -188,7 +205,7 @@ async def tfm_companies(request: Request):
 @openapi.response(200, description="List of prompts")
 @openapi.tag("prompts")
 async def tfm_prompts(request: Request, company_id: int):
-    return json_response(get_prompts(company_id))
+    return json_response(await get_prompts(company_id))
 
 
 @dataclass
@@ -209,7 +226,7 @@ async def tfm_update_prompt(request: Request, prompt_id: int):
     if template is None:
         return json_response({"message": "template is required"}, status=400)
 
-    updated = update_prompt(prompt_id, template)
+    updated = await update_prompt(prompt_id, template)
     if updated is None:
         return json_response({"message": f"Prompt {prompt_id} not found"}, status=404)
     return json_response(updated)

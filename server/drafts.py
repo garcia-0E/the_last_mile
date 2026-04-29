@@ -34,7 +34,7 @@ def _get_model():
     return _model
 
 
-def _build_prompt(
+async def _build_prompt(
     lead: Dict[str, Any],
     context: str,
     company_id: int,
@@ -63,7 +63,7 @@ def _build_prompt(
     """
     from services import get_active_prompt
 
-    template = get_active_prompt(company_id, prompt_name)
+    template = await get_active_prompt(company_id, prompt_name)
     if template is None:
         raise ValueError(
             f"No active prompt found for company_id={company_id}, name={prompt_name!r}"
@@ -104,7 +104,7 @@ async def generate_drafts(
 
     for lead in leads:
         payload = lead.get("payload", lead)
-        prompt = _build_prompt(lead, context, company_id, prompt_name)
+        prompt = await _build_prompt(lead, context, company_id, prompt_name)
 
         try:
             response = await model.generate_content_async(prompt)

@@ -79,7 +79,7 @@ def _require_env(name: str) -> str:
 
 def _qdrant_config() -> Dict[str, Any]:
     return {
-        "host": os.environ.get("QDRANT_HOST", "https://e4b7056d-bf13-4771-bf21-aac0a0c5563f.europe-west3-0.gcp.cloud.qdrant.io"),
+        "host": os.environ.get("QDRANT_HOST", "e4b7056d-bf13-4771-bf21-aac0a0c5563f.europe-west3-0.gcp.cloud.qdrant.io"),
         "port": int(os.environ.get("QDRANT_PORT", "6333")),
         "api_key": os.environ.get("QDRANT_API_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.OrmvGmATwHO4l2lqULhOYkmHpeXWL3Rr0752l8Mhqcc"),
         "prefer_grpc": os.environ.get("QDRANT_GRPC", "false").lower() == "true",

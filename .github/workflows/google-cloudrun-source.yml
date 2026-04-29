@@ -11,7 +11,7 @@ env:
   SERVICE: "cloudrun-service-tfm"
   WORKLOAD_IDENTITY_PROVIDER: "projects/725722089/locations/global/workloadIdentityPools/github/providers/github-actions-provider"
   SERVICE_ACCOUNT: "tlm-deploy-sa@vast-formula-478020-a1.iam.gserviceaccount.com"
-
+  CSQL_INSTANCE : "tfm-db"
 
 jobs:
   deploy:
@@ -57,7 +57,7 @@ jobs:
           service: "${{ env.SERVICE }}"
           region: "${{ env.REGION }}"
           image: "${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/server:${{ github.sha }}"
-          flags: "--allow-unauthenticated --port=8000 --add-cloudsql-instances=${{ env.PROJECT_ID }}:${{ env.REGION }}:${{ env.INSTANCE }}"
+          flags: "--allow-unauthenticated --port=8000 --add-cloudsql-instances=${{ env.PROJECT_ID }}:${{ env.REGION }}:${{ env.CSQL_INSTANCE }}"
           env_vars: |
             GOOGLE_CLOUD_PROJECT=${{ env.PROJECT_ID }},
             PUBSUB_TOPIC=file-processing-topic

@@ -69,6 +69,7 @@ jobs:
             INSTANCE_CONNECTION_NAME=${{ env.PROJECT_ID }}:${{ env.REGION }}:${{ env.CSQL_INSTANCE }}
             PG_PASSWORD=${{ secrets.PG_PASSWORD }}
 
+
       - name: "Show output"
         run: |
           echo ${{ steps.deploy.outputs.url }}

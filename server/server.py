@@ -11,7 +11,7 @@ from sanic.worker.manager import WorkerManager
 from enhancer import normalize_dataframe
 from embedder import embed
 from db import get_client, PostgresClient
-from query import discover_partners, ensure_partner_indexes, get_partner_filters
+from query import COLLECTION_NAME, discover_partners, ensure_partner_indexes, get_partner_filters
 from drafts import generate_drafts
 import services
 from services import get_companies, get_prompts, update_prompt
@@ -51,6 +51,11 @@ class FiltersResponse:
 class EnhancerResponse:
     message: str
     data: List[Dict[str, Any]] = field(default_factory=list)
+
+@dataclass
+class MarkContactedRequest:
+    """Body for the /leads/mark-contacted endpoint."""
+    ids: List[str]
 
 @dataclass
 class DraftsRequest:
@@ -159,6 +164,29 @@ async def tfm_suggester(request: Request):
 @openapi.tag("partners")
 async def tfm_filters(request: Request):
     return json_response(await get_partner_filters(get_client()))
+
+
+@app.post("/leads/mark-contacted")
+@openapi.summary("Mark leads as already contacted")
+@openapi.description(
+    "Set the already_contacted flag to true for the given lead IDs "
+    "in the vector store."
+)
+@openapi.body({"application/json": MarkContactedRequest})
+@openapi.response(200, description="Leads marked as contacted")
+@openapi.tag("leads")
+async def tfm_mark_contacted(request: Request):
+    body = request.json or {}
+    ids = body.get("ids", [])
+    if not ids:
+        return json_response({"message": "No lead IDs provided"}, status=400)
+
+    await get_client().update_payload(
+        COLLECTION_NAME,
+        ids=ids,
+        payload={"already_contacted": True},
+    )
+    return json_response({"message": f"Marked {len(ids)} leads as already contacted"})
 
 
 @app.post("/drafts")

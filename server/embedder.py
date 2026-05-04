@@ -8,7 +8,7 @@ from sanic.log import logger
 
 PROJECT_NAME = os.environ.get("GOOGLE_CLOUD_PROJECT", "vast-formula-478020-a1")
 PUBSUB_EMBEDDING_TOPIC = os.environ.get("PUBSUB_EMBEDDING_TOPIC", "embedding-processing-topic")
-EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "all-mpnet-base-v2")
 
 _model = None
 _publisher = None
@@ -83,7 +83,7 @@ def _build_payloads(df: pd.DataFrame) -> List[dict]:
     """Extract metadata payload for each row to accompany the embedding."""
     payloads = []
     for _, row in df.iterrows():
-        payload = {}
+        payload = {"already_contacted": False}
         for field in _PAYLOAD_FIELDS:
             value = row.get(field)
             if pd.notna(value):

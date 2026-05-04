@@ -91,12 +91,19 @@ async def ensure_partner_indexes(client: DBClient) -> None:
         index_type="text",
     )
 
+    await client.ensure_indexes(
+        COLLECTION_NAME,
+        ["already_contacted"],
+        index_type="bool"
+    )
+
 
 # ---------------------------------------------------------------------------
 # Filter options endpoint helper
 # ---------------------------------------------------------------------------
 
 async def get_partner_filters(client: DBClient) -> Dict[str, List[Any]]:
+
     """Return the available values for each DB-backed partner filter.
 
     Sources are split by where each field lives:
@@ -204,7 +211,9 @@ def build_partner_filter(
     if exclude_industries is None:
         exclude_industries = DEFAULT_EXCLUDE_INDUSTRIES
 
-    must_not_clauses: List[Dict[str, Any]] = []
+    must_not_clauses: List[Dict[str, Any]] = [
+        {"key": "already_contacted", "match": True},
+    ]
     for kw in exclude_industries:
         if kw:
             must_not_clauses.append({
@@ -217,9 +226,6 @@ def build_partner_filter(
                 "key": EXCLUDE_FILTERS["company_name_to_exclude"],
                 "match_text": kw,
             })
-
-    if not must_clauses and not must_not_clauses:
-        return None
 
     result: Dict[str, Any] = {}
     if must_clauses:

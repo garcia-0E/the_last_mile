@@ -119,7 +119,7 @@ async def generate_drafts(
             draft_text = None
 
         drafts.append({
-            "lead": payload,
+            "lead": {**payload, "id": lead.get("id")},
             "draft": draft_text,
         })
 

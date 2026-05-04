@@ -208,6 +208,15 @@ class DBClient(ABC):
         """
 
     @abstractmethod
+    async def update_payload(
+        self,
+        collection: str,
+        ids: List[str],
+        payload: Dict[str, Any],
+    ) -> None:
+        """Update payload fields on existing records identified by *ids*."""
+
+    @abstractmethod
     async def delete(self, collection: str, ids: List[str]) -> None:
         """Remove records by id from *collection*."""
 
@@ -286,6 +295,7 @@ class QdrantClient(DBClient):
         schema_map = {
             "text": PayloadSchemaType.TEXT,
             "keyword": PayloadSchemaType.KEYWORD,
+            "bool": PayloadSchemaType.BOOL,
         }
         schema = schema_map.get(index_type, PayloadSchemaType.TEXT)
 
@@ -405,6 +415,20 @@ class QdrantClient(DBClient):
             {"id": hit.id, "score": hit.score, "payload": hit.payload}
             for hit in results.points
         ]
+
+    async def update_payload(
+        self, collection: str, ids: List[str], payload: Dict[str, Any],
+    ) -> None:
+        await asyncio.to_thread(
+            self._client.set_payload,
+            collection_name=collection,
+            payload=payload,
+            points=ids,
+        )
+        logger.info(
+            "Updated payload on %d points in Qdrant collection '%s'",
+            len(ids), collection,
+        )
 
     async def delete(self, collection: str, ids: List[str]) -> None:
         from qdrant_client.models import PointIdsList
@@ -653,6 +677,33 @@ class PostgresClient(DBClient):
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(sql, *params)
             return [dict(row) for row in rows]
+
+    async def update_payload(
+        self, collection: str, ids: List[str], payload: Dict[str, Any],
+    ) -> None:
+        if not ids or not payload:
+            return
+        set_parts: List[str] = []
+        params: List[Any] = []
+        for key, value in payload.items():
+            params.append(value)
+            set_parts.append(f"{key} = ${len(params)}")
+
+        id_placeholders = ", ".join(
+            f"${i}" for i in range(len(params) + 1, len(params) + len(ids) + 1)
+        )
+        params.extend(ids)
+
+        sql = (
+            f"UPDATE {collection} SET {', '.join(set_parts)} "
+            f"WHERE id IN ({id_placeholders})"
+        )
+        async with self._pool.acquire() as conn:
+            await conn.execute(sql, *params)
+        logger.info(
+            "Updated payload on %d rows in PostgreSQL table '%s'",
+            len(ids), collection,
+        )
 
     async def delete(self, collection: str, ids: List[str]) -> None:
         if not ids:

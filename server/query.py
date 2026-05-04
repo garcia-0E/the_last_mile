@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 
 from db import DBClient
 
-COLLECTION_NAME = "tfm_leads"
+COLLECTION_NAME = "tfm_leads_768"
 
 # ---------------------------------------------------------------------------
 # Field groups
@@ -85,11 +85,11 @@ async def ensure_partner_indexes(client: DBClient) -> None:
     Future fields (``stage``, ``partnership_types``, ``partnership_offer``)
     can be added once the ingestion pipeline starts persisting them.
     """
-    await client.ensure_indexes(
-        COLLECTION_NAME,
-        ["industry", "title", "company_name", "email", "country", "seniority"],
-        index_type="text",
-    )
+    # await client.ensure_indexes(
+    #     COLLECTION_NAME,
+    #     ["industry", "title", "company_name", "email", "country", "seniority"],
+    #     index_type="text",
+    # )
 
     await client.ensure_indexes(
         COLLECTION_NAME,
@@ -196,10 +196,10 @@ def build_partner_filter(
     must_clauses: List[Dict[str, Any]] = []
 
     single_values = {
-        "country": country,
-        "partnership_types": partnership_types,
-        "partnership_offer": partnership_offer,
-        "stage": stage,
+        "country": country
+        # "partnership_types": partnership_types,
+        # "partnership_offer": partnership_offer,
+        # "stage": stage,
     }
     for ui_key, value in single_values.items():
         if value:
@@ -214,18 +214,18 @@ def build_partner_filter(
     must_not_clauses: List[Dict[str, Any]] = [
         {"key": "already_contacted", "match": True},
     ]
-    for kw in exclude_industries:
-        if kw:
-            must_not_clauses.append({
-                "key": EXCLUDE_FILTERS["exclude_industries"],
-                "match_text": kw,
-            })
-    for kw in company_name_to_exclude or []:
-        if kw:
-            must_not_clauses.append({
-                "key": EXCLUDE_FILTERS["company_name_to_exclude"],
-                "match_text": kw,
-            })
+    # for kw in exclude_industries:
+    #     if kw:
+    #         must_not_clauses.append({
+    #             "key": EXCLUDE_FILTERS["exclude_industries"],
+    #             "match_text": kw,
+    #         })
+    # for kw in company_name_to_exclude or []:
+    #     if kw:
+    #         must_not_clauses.append({
+    #             "key": EXCLUDE_FILTERS["company_name_to_exclude"],
+    #             "match_text": kw,
+    #         })
 
     result: Dict[str, Any] = {}
     if must_clauses:

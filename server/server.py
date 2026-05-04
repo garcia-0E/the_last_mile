@@ -121,7 +121,7 @@ async def tfm_enhancer(request: Request):
         n_df = normalize_dataframe(df)
         e_df = embed(n_df)
         # publish_file_message(e_df)
-        await get_client().upsert("tfm_leads", e_df)
+        await get_client().upsert(COLLECTION_NAME, e_df)
         return json_response({"message": "File received and processed successfully!"})
     return text("Hello World from the Built image!")
 

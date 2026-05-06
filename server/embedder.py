@@ -50,7 +50,7 @@ def _get_model():
         from sentence_transformers import SentenceTransformer
 
         logger.info(f"Loading embedding model: {EMBEDDING_MODEL}")
-        _model = SentenceTransformer(EMBEDDING_MODEL, use_auth_token=os.environ.get("HF_TOKEN"))
+        _model = SentenceTransformer(EMBEDDING_MODEL, token=os.environ.get("HF_TOKEN"))
     return _model
 
 

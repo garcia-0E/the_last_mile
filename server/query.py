@@ -250,20 +250,30 @@ async def search_partners(
     exclude_industries: Optional[List[str]] = None,
     company_name_to_exclude: Optional[List[str]] = None,
     top_k: int = 20,
-) -> List[Dict[str, Any]]:
-    """Search for contacts matching the structured partner criteria."""
+    offset: int = 0,
+    limit: int = 20,
+) -> Dict[str, Any]:
+    """Search for contacts matching the structured partner criteria.
+
+    Returns ``{"results": [...], "total": int}``.
+    """
     filters = build_partner_filter(
         country=country,
         exclude_industries=exclude_industries,
         company_name_to_exclude=company_name_to_exclude,
     )
 
-    return await client.query(
+    results = await client.query(
         COLLECTION_NAME,
         vector=query_vector,
         filters=filters,
         top_k=top_k,
+        offset=offset,
+        limit=limit,
     )
+    total = await client.count(COLLECTION_NAME, filters=filters)
+
+    return {"results": results, "total": total}
 
 
 # ---------------------------------------------------------------------------
@@ -285,11 +295,15 @@ async def discover_partners(
     exclude_industries: Optional[List[str]] = None,
     company_name_to_exclude: Optional[List[str]] = None,
     top_k: int = 20,
-) -> List[Dict[str, Any]]:
+    offset: int = 0,
+    limit: int = 20,
+) -> Dict[str, Any]:
     """High-level helper: build the embedding and search.
 
     The free-text inputs are concatenated to produce the query embedding;
     the DB-backed criteria are passed straight through as filters.
+
+    Returns ``{"results": [...], "total": int}``.
     """
     from embedder import _get_model
 
@@ -313,4 +327,6 @@ async def discover_partners(
         exclude_industries=exclude_industries,
         company_name_to_exclude=company_name_to_exclude,
         top_k=top_k,
+        offset=offset,
+        limit=limit,
     )

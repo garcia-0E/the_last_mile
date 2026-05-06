@@ -180,6 +180,8 @@ class DBClient(ABC):
         vector: Optional[List[float]] = None,
         filters: Optional[Dict[str, Any]] = None,
         top_k: int = 10,
+        offset: int = 0,
+        limit: int = 20,
     ) -> List[Dict[str, Any]]:
         """Return the *top_k* most relevant records from *collection*.
 
@@ -215,6 +217,18 @@ class DBClient(ABC):
         payload: Dict[str, Any],
     ) -> None:
         """Update payload fields on existing records identified by *ids*."""
+
+    @abstractmethod
+    async def count(
+        self,
+        collection: str,
+        *,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        """Return the number of records in *collection* matching *filters*.
+
+        When *filters* is ``None`` the total collection size is returned.
+        """
 
     @abstractmethod
     async def delete(self, collection: str, ids: List[str]) -> None:
@@ -398,6 +412,8 @@ class QdrantClient(DBClient):
         vector: Optional[List[float]] = None,
         filters: Optional[Dict[str, Any]] = None,
         top_k: int = 10,
+        offset: int = 0,
+        limit: int = 20,
     ) -> List[Dict[str, Any]]:
         if vector is None:
             raise ValueError("Qdrant queries require a vector")
@@ -409,7 +425,8 @@ class QdrantClient(DBClient):
             collection_name=collection,
             query=vector,
             query_filter=query_filter,
-            limit=top_k,
+            limit=limit,
+            offset=offset,
         )
         return [
             {"id": hit.id, "score": hit.score, "payload": hit.payload}
@@ -429,6 +446,21 @@ class QdrantClient(DBClient):
             "Updated payload on %d points in Qdrant collection '%s'",
             len(ids), collection,
         )
+
+    async def count(
+        self,
+        collection: str,
+        *,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        count_filter = self._build_filter(filters) if filters else None
+        result = await asyncio.to_thread(
+            self._client.count,
+            collection_name=collection,
+            count_filter=count_filter,
+            exact=True,
+        )
+        return result.count
 
     async def delete(self, collection: str, ids: List[str]) -> None:
         from qdrant_client.models import PointIdsList
@@ -665,14 +697,19 @@ class PostgresClient(DBClient):
         vector: Optional[List[float]] = None,
         filters: Optional[Dict[str, Any]] = None,
         top_k: int = 10,
+        offset: int = 0,
+        limit: int = 20,
     ) -> List[Dict[str, Any]]:
         if filters:
             where_clause, params = self._build_where(filters)
         else:
             where_clause, params = "", []
 
-        params.append(top_k)
-        sql = f"SELECT * FROM {collection}{where_clause} LIMIT ${len(params)}"
+        params.append(limit)
+        limit_idx = len(params)
+        params.append(offset)
+        offset_idx = len(params)
+        sql = f"SELECT * FROM {collection}{where_clause} LIMIT ${limit_idx} OFFSET ${offset_idx}"
 
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(sql, *params)
@@ -704,6 +741,20 @@ class PostgresClient(DBClient):
             "Updated payload on %d rows in PostgreSQL table '%s'",
             len(ids), collection,
         )
+
+    async def count(
+        self,
+        collection: str,
+        *,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        if filters:
+            where_clause, params = self._build_where(filters)
+        else:
+            where_clause, params = "", []
+        sql = f"SELECT COUNT(*) FROM {collection}{where_clause}"
+        async with self._pool.acquire() as conn:
+            return await conn.fetchval(sql, *params)
 
     async def delete(self, collection: str, ids: List[str]) -> None:
         if not ids:

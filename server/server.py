@@ -150,6 +150,8 @@ async def tfm_suggester(request: Request):
             exclude_industries=body.get("exclude_industries"),
             company_name_to_exclude=body.get("company_name_to_exclude"),
             top_k=int(body.get("top_k", 20)),
+            offset=int(body.get("offset", 0)),
+            limit=int(body.get("limit", 20)),
         )
     return json_response(response)
 
@@ -261,4 +263,4 @@ async def tfm_update_prompt(request: Request, prompt_id: int):
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000, debug=True, auto_reload=True)
+    app.run(host="0.0.0.0", port=8000, debug=True, auto_reload=True, workers=1)

@@ -50,7 +50,7 @@ def _get_model():
         from sentence_transformers import SentenceTransformer
 
         logger.info(f"Loading embedding model: {EMBEDDING_MODEL}")
-        _model = SentenceTransformer(EMBEDDING_MODEL)
+        _model = SentenceTransformer(EMBEDDING_MODEL, use_auth_token=os.environ.get("HF_TOKEN"))
     return _model
 
 
@@ -112,7 +112,7 @@ def embed(df: pd.DataFrame) -> list:
     logger.info(f"Generating embeddings for {len(df)} contacts")
     texts = _build_text_representations(df)
     model = _get_model()
-    vectors = model.encode(texts, show_progress_bar=False)
+    vectors = model.encode(texts, show_progress_bar=False,chunk_size=20)
 
     payloads = _build_payloads(df)
 
